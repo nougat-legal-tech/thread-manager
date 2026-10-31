@@ -548,6 +548,11 @@ router.get('/chat/status/:conversationId', async (req, res) => {
     aggregatedContent: resumeState?.aggregatedContent ?? [],
     createdAt: job.createdAt,
     elapsedMs: getGenerationElapsedMs(job),
+    // The resume endpoint requires the original route identity. These values
+    // come from the server-owned job record and let trusted adapters resume
+    // the same agent without accepting routing fields from a client.
+    ...(pendingLive && job.endpoint && { endpoint: job.endpoint }),
+    ...(pendingLive && job.agent_id && { agent_id: job.agent_id }),
     resumeState,
     // Surface the live pending approval so a client rebuilding from /chat/status
     // (reload / cross-replica) has the action id + payload to render and submit
