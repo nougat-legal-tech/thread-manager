@@ -368,7 +368,10 @@ _CHAT_RUN_TOOL_GUIDANCE = [
         "name": "list_case_signatures",
         "operationIds": ["list-case-signatures"],
         "requiredInputs": ["caseId"],
-        "invocationGuidance": "Always pass caseId when listing signature requests for a case.",
+        "invocationGuidance": (
+            "Always pass caseId. Pass app_id when the case may exist in more than one practice area so authorization "
+            "and results use the intended app scope."
+        ),
     },
     {
         "name": "list_organization_signatures",
@@ -889,6 +892,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "retrieve-company-details",
             "surfaces": ["intent_handler", "chat_proxy"],
             "verification": "verified_shared_operation_id",
+            "appIds": ["3", "4"],
             # Older MCP images publish organization_id for this company-scoped
             # lookup. That argument is semantically the selected case/company
             # scope and must be filled from trusted case context.
@@ -902,6 +906,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "retrieve-cap-table",
             "surfaces": ["intent_handler", "chat_proxy"],
             "verification": "verified_shared_operation_id",
+            "appIds": ["3", "4"],
             "trustedScopeBindings": {"organization_id": "caseId"},
             "requiresCaseId": True,
         },
@@ -911,7 +916,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "deadline_acknowledgment",
             "operationId": "deadline-acknowledgment",
             "surfaces": ["intent_handler", "chat_proxy"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_contract_mapping",
             "appIds": ["3", "4"],
             "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
             "defaultArguments": {"operation": "acknowledge"},
@@ -985,6 +990,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             # default/bindings below, and the live SeriesAI response carries the
             # legacy actionItems/text/slackVisualSummary contract.
             "verification": "verified_shared_operation_id",
+            "appIds": ["3", "4"],
             "inputSchemasBySurface": {
                 "intent_handler": {
                     "type": "object",
@@ -1025,7 +1031,8 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "retrieve_company_timeline",
             "operationId": "retrieve-company-timeline",
             "surfaces": ["intent_handler", "chat_proxy"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
             "inputSchemasBySurface": {
                 "intent_handler": {
                     "type": "object",
@@ -1056,13 +1063,13 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
                 "resultLimit": "result_limit",
             },
             "notes": (
-                "Candidate contract for the legacy lifecycle timeline read. Django authenticates the caller; "
+                "Verified source contract for the legacy lifecycle timeline read. Django authenticates the caller; "
                 "userId is not forwarded as a query parameter. Defaults exclude calendar and booking rows, "
                 "require displayable events, and preserve newest-first ordering. The legacy default limit is 10 "
-                "and permits larger explicit requests; the shared endpoint caps resultLimit at 100 and reports "
-                "totalCount/truncated. The Django SeriesAI projection regression passes for the legacy timeline "
-                "envelope, Slack summary, and email_body/text rendering. Keep this alias unverified for requests "
-                "above 100 and until authenticated ChatProxy/channel parity is proven. This read-only DynamoDB "
+                "and permits larger explicit requests; the shared endpoint accepts any positive resultLimit and "
+                "reports totalCount/truncated. The Django SeriesAI projection regression covers the legacy timeline "
+                "envelope, Slack summary/view, and email_body/text rendering. This mapping is scoped to apps 3/4; "
+                "deployed ChatProxy execution and authenticated Slack/email channel parity remain unverified. This read-only DynamoDB "
                 "query uses deterministic filtering and does not perform AI inference."
             ),
         },
@@ -1705,7 +1712,10 @@ def resolve_universal_function_id(identifier: Any, records: list[dict[str, Any]]
         caller_aliases = record.get("callerAliases")
         if isinstance(caller_aliases, list):
             for alias in caller_aliases:
-                if not isinstance(alias, dict) or alias.get("verification") != "verified_shared_operation_id":
+                if not isinstance(alias, dict) or alias.get("verification") not in {
+                    "verified_shared_operation_id",
+                    "verified_contract_mapping",
+                }:
                     continue
                 alias_name = str(alias.get("name") or "").strip()
                 if alias_name:

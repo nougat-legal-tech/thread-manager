@@ -51,7 +51,8 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     timeline_alias = next(
         alias for alias in important_dates["callerAliases"] if alias["name"] == "retrieve_company_timeline"
     )
-    assert timeline_alias["verification"] == "operation_id_match_only"
+    assert timeline_alias["verification"] == "verified_contract_mapping"
+    assert timeline_alias["appIds"] == ["3", "4"]
     assert timeline_alias["defaultArguments"]["sort_order"] == "desc"
     assert timeline_alias["argumentBindings"]["lifecycleStage"] == "stage"
     deadlines_alias = next(

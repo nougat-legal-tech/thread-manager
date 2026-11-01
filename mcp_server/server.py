@@ -1278,9 +1278,14 @@ async def retrieve_document_summary(ctx: Context, document_id: str, case_id: str
     return await _post(ctx, "/api/retrieve-document-summary/", {"documentId": document_id, "caseId": case_id})
 
 
-@mcp.tool(description="Look up the signature requests for a case.")
-async def list_case_signatures(ctx: Context, case_id: str) -> dict:
-    return await _get(ctx, f"/api/cases/{case_id}/signatures")
+@mcp.tool(
+    description=(
+        "Look up signature requests for a case. Pass app_id when the case may exist in more than one practice area "
+        "so results and authorization are scoped to the intended app."
+    )
+)
+async def list_case_signatures(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
+    return await _get(ctx, f"/api/cases/{case_id}/signatures", {"appId": app_id})
 
 
 @mcp.tool(description="Look up workspace-scoped signature requests for an organization.")
