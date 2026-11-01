@@ -11,6 +11,7 @@ const {
   messageUserLimiter,
   subagentActivityHandlerInputs,
   checkpointRows,
+  checkpointDeletionAcknowledge,
   resetCheckpointRows,
 } = require(MOCKS);
 
@@ -117,6 +118,7 @@ describe('Convos Routes', () => {
     jest.clearAllMocks();
     moderatedTexts.length = 0;
     generationJobManager.getCleanupJob.mockResolvedValue(null);
+    generationJobManager.purgeTemporaryJob.mockResolvedValue(true);
     generationJobManager.abortJob.mockResolvedValue({ success: true });
     generationJobManager.getCleanupBlockingJobIdsForUser.mockResolvedValue([]);
     generationJobManager.getCleanupBlockingJobIdsForConversations.mockResolvedValue([]);
@@ -840,6 +842,38 @@ describe('Convos Routes', () => {
   });
 
   describe('DELETE /', () => {
+    it('purges a drained temporary agent job before acknowledging meeting conversation deletion', async () => {
+      const createdAt = Date.now();
+      generationJobManager.getCleanupJob.mockImplementation(async (conversationId) =>
+        conversationId === 'meeting-session-1'
+          ? {
+              metadata: { userId: 'test-user-123', isTemporary: true },
+              status: 'aborted',
+              createdAt,
+            }
+          : null,
+      );
+      deleteConvos.mockResolvedValue({
+        deletedCount: 1,
+        conversationIds: ['meeting-session-1'],
+      });
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: 'meeting-session-1' } });
+
+      expect(response.status).toBe(201);
+      expect(generationJobManager.purgeTemporaryJob).toHaveBeenCalledWith(
+        'meeting-session-1',
+        createdAt,
+        'test-user-123',
+        undefined,
+      );
+      expect(generationJobManager.purgeTemporaryJob.mock.invocationCallOrder[0]).toBeLessThan(
+        checkpointDeletionAcknowledge.mock.invocationCallOrder[0],
+      );
+    });
+
     it('fences the owner when DELETE / is called without a conversation filter', async () => {
       deleteConvos.mockResolvedValue({ deletedCount: 3, conversationIds: ['a', 'b', 'c'] });
 

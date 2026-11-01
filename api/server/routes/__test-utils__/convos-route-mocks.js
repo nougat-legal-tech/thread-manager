@@ -1,6 +1,7 @@
 const archiveAllHandler = jest.fn();
 const generationJobManager = {
   getCleanupJob: jest.fn().mockResolvedValue(null),
+  purgeTemporaryJob: jest.fn().mockResolvedValue(true),
   abortJob: jest.fn().mockResolvedValue({ success: true }),
   getCleanupBlockingJobIdsForUser: jest.fn().mockResolvedValue([]),
   getCleanupBlockingJobIdsForConversations: jest.fn().mockResolvedValue([]),
@@ -38,6 +39,7 @@ const deleteOwnedAgentCheckpoints = jest.fn(async (userId, tenantId, threadIds) 
   }
 });
 const deletionTargets = new Map();
+const checkpointDeletionAcknowledge = jest.fn(async (key) => deletionTargets.delete(key));
 const openCheckpointDeletion = jest.fn(async (userId, tenantId, root, cfg) => {
   const key = JSON.stringify([userId, tenantId, root]);
   const ids = deletionTargets.get(key) ?? new Set();
@@ -47,7 +49,7 @@ const openCheckpointDeletion = jest.fn(async (userId, tenantId, root, cfg) => {
     remember: async (targets) => targets.forEach((id) => ids.add(id)),
     cleanup: async () =>
       deleteOwnedAgentCheckpoints(userId, tenantId, root == null ? undefined : [...ids], cfg),
-    acknowledge: async () => deletionTargets.delete(key),
+    acknowledge: async () => checkpointDeletionAcknowledge(key),
   };
 });
 
@@ -66,6 +68,7 @@ module.exports = {
   messageIpLimiter,
   messageUserLimiter,
   checkpointRows,
+  checkpointDeletionAcknowledge,
   resetCheckpointRows,
 
   agents: () => ({ sleep: jest.fn() }),
@@ -171,6 +174,7 @@ module.exports = {
     deleteAgentCheckpoints,
     deleteOwnedAgentCheckpoints,
     openCheckpointDeletion,
+    checkpointDeletionAcknowledge,
     isConversationImportError: jest.fn((error) => error?.name === 'ConversationImportError'),
     ...overrides,
   }),

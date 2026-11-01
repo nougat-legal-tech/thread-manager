@@ -3117,8 +3117,43 @@ class GenerationJobManagerClass {
         providerDrained: job.providerDrained,
         terminalPersistencePending: job.terminalPersistencePending,
         terminalHostActionPending: job.terminalHostActionPending,
+        isTemporary: job.isTemporary,
       },
     };
+  }
+
+  /** Remove a drained temporary generation and its stream artifacts after the
+   * owner has deleted the associated conversation. Persistent jobs retain the
+   * existing reconnect and schedule-reconciliation behavior. */
+  async purgeTemporaryJob(
+    streamId: string,
+    expectedCreatedAt: number,
+    userId: string,
+    tenantId?: string,
+  ): Promise<boolean> {
+    const job = await this.jobStore.getJob(streamId);
+    if (job == null) return true;
+    if (job.createdAt !== expectedCreatedAt) return false;
+    if (
+      job.userId !== userId ||
+      (job.tenantId != null && job.tenantId !== tenantId) ||
+      job.isTemporary !== true ||
+      (job.status !== 'complete' && job.status !== 'aborted' && job.status !== 'error') ||
+      job.providerDrained === false ||
+      job.terminalPersistencePending === true ||
+      job.terminalHostActionPending === true ||
+      job.preserveForScheduleReconcile === true
+    ) {
+      return false;
+    }
+    const deleted = await this.jobStore.deleteJob(streamId, expectedCreatedAt);
+    if (!deleted) {
+      const current = await this.jobStore.getJob(streamId);
+      if (current?.createdAt === expectedCreatedAt) return false;
+      if (current != null) return false;
+    }
+    this.eventTransport.cleanup(streamId);
+    return true;
   }
 
   async getJob(streamId: string): Promise<t.GenerationJob | undefined> {
