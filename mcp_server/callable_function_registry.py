@@ -888,6 +888,26 @@ FUNCTION_REGISTRY = MappingProxyType(_FUNCTIONS)
 # Explicit caller-name aliases for functions with the same published operation
 # ID. Keep this small and evidence-backed: a name match alone does not prove a
 # compatible implementation or request contract.
+MCP_FUNCTION_METADATA: dict[str, dict[str, Any]] = {
+    name: {
+        "appIds": ["3", "4", "5"],
+        "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+        "requiresCaseId": True,
+        "mutatesState": False,
+        "sendsExternalMessage": False,
+        "startsAsyncWorkflow": False,
+    }
+    for name in (
+        "get_seriesai_revenue_metrics",
+        "get_seriesai_recent_sales",
+        "get_seriesai_marketing_performance",
+        "get_seriesai_web_analytics",
+        "get_seriesai_connector_status",
+        "list_seriesai_upcoming_campaigns",
+        "list_seriesai_marketing_automations",
+    )
+}
+
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "get_signature_request_detail": (
         {
@@ -1736,6 +1756,9 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
         name = str(record.get("name") or record.get("functionId") or "").strip()
         if not name:
             continue
+        canonical_metadata = MCP_FUNCTION_METADATA.get(name)
+        if canonical_metadata:
+            record.update(deepcopy(canonical_metadata))
         compatibility = MCP_CALLER_COMPATIBILITY.get(name)
         if compatibility:
             record["callerAliases"] = deepcopy(list(compatibility))
@@ -1779,6 +1802,8 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
             if isinstance(schemas_by_surface, dict):
                 schemas_by_surface["mcp"] = deepcopy(schema)
         existing["mcpDescription"] = record.get("description")
+        if canonical_metadata:
+            existing.update(deepcopy(canonical_metadata))
         if compatibility:
             existing["callerAliases"] = deepcopy(list(compatibility))
         if not existing.get("description"):
