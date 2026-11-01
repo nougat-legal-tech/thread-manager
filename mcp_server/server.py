@@ -445,7 +445,11 @@ async def bulk_edit_case_action_items(
 
 
 @mcp.tool(
-    description="Create, update, or delete one case action item with legacy-style target resolution. Supply app_id when the case ID exists in multiple products."
+    description=(
+        "Create, update, or delete one case action item with legacy-style target resolution. Supply app_id when the case ID "
+        "exists in multiple products. On update, use assistant_excerpt to leave a concise verified result or a blocker "
+        "and next human action visible on the task."
+    )
 )
 async def edit_case_action_items(
     ctx: Context,
@@ -454,6 +458,7 @@ async def edit_case_action_items(
     item_id: str | None = None,
     title: str | None = None,
     description: str | None = None,
+    assistant_excerpt: str | None = None,
     contains: str | None = None,
     status: str | None = None,
     completed: bool | None = None,
@@ -476,6 +481,7 @@ async def edit_case_action_items(
         ("itemId", item_id),
         ("title", title),
         ("description", description),
+        ("assistantExcerpt", assistant_excerpt),
         ("contains", contains),
         ("status", status),
         ("completed", completed),
@@ -1309,9 +1315,20 @@ async def list_organization_signatures(
     )
 
 
-@mcp.tool(description="Get detail for a specific signature request.")
-async def get_signature_request_detail(ctx: Context, signature_id: str) -> dict:
-    return await _get(ctx, f"/api/signatures/requests/{signature_id}")
+@mcp.tool(
+    description="Get detail for a specific signature request. When supplied, case_id and app_id bind the request to the authenticated target scope."
+)
+async def get_signature_request_detail(
+    ctx: Context,
+    signature_id: str,
+    case_id: str | None = None,
+    app_id: str | None = None,
+) -> dict:
+    return await _get(
+        ctx,
+        f"/api/signatures/requests/{signature_id}",
+        {"caseId": case_id, "appId": app_id},
+    )
 
 
 @mcp.tool(description="List Vienna generatable document templates.")
@@ -1880,7 +1897,13 @@ async def list_whatsapp_messages(
     )
 
 
-@mcp.tool(description="Send a WhatsApp Business message after explicit user confirmation.")
+@mcp.tool(
+    description=(
+        "Send a WhatsApp Business message only after the user explicitly approves the exact "
+        "recipient and message shown in a preview. Without confirm=true, return the preview and "
+        "do not send anything."
+    ),
+)
 async def send_whatsapp_message(
     ctx: Context,
     connection_id: str,
@@ -1889,7 +1912,34 @@ async def send_whatsapp_message(
     message: object | None = None,
     context_message_id: str | None = None,
     app_id: str | None = None,
+    confirm: bool = False,
 ) -> dict:
+    missing = []
+    if not isinstance(to, str) or not to.strip():
+        missing.append("to")
+    if not message:
+        missing.append("message")
+    if missing:
+        return {
+            "status": "missing_required_inputs",
+            "sent": False,
+            "missing": missing,
+            "instruction": "Provide the recipient and message before requesting approval or sending.",
+        }
+    if confirm is not True:
+        return {
+            "status": "confirmation_required",
+            "sent": False,
+            "preview": {
+                "connectionId": connection_id,
+                "caseId": case_id,
+                "to": to,
+                "message": message,
+                "contextMessageId": context_message_id,
+                "appId": app_id,
+            },
+            "instruction": "Nothing was sent. Ask the user to approve this exact recipient and message before retrying with confirm=true.",
+        }
     payload: dict[str, object] = {"connectionId": connection_id, "caseId": case_id}
     if to is not None:
         payload["to"] = to
@@ -2742,7 +2792,12 @@ async def convert_communication_to_new_case(
     return await _post(ctx, "/api/add-case/", payload)
 
 
-@mcp.tool(description="Update an existing action item.")
+@mcp.tool(
+    description=(
+        "Update an existing action item. Use assistant_excerpt to leave the user a concise summary of verified "
+        "work or, when blocked, the blocker and next human action."
+    )
+)
 async def update_action_item(
     ctx: Context,
     item_id: str,
@@ -2751,6 +2806,7 @@ async def update_action_item(
     due_date: str | None = None,
     status: str | None = None,
     priority: str | None = None,
+    assistant_excerpt: str | None = None,
 ) -> dict:
     body: dict[str, object] = {}
     _set_payload_value(body, "title", title)
@@ -2758,12 +2814,19 @@ async def update_action_item(
     _set_payload_value(body, "suggestedDueDate", due_date)
     _set_payload_value(body, "status", status)
     _set_payload_value(body, "priority", priority)
+    _set_payload_value(body, "assistantExcerpt", assistant_excerpt)
     return await _patch(ctx, f"/api/action-items/{item_id}/", body)
 
 
-@mcp.tool(description="Assign or reassign an action item to a user.")
+@mcp.tool(
+    description=(
+        "Assign or reassign an action item to a user. Provide the user's ID or email in assignee_id. "
+        "Vienna may use vienna@nougat.law when she decides she can execute the task, and should continue "
+        "the current task workflow after assigning it."
+    )
+)
 async def assign_action_item(ctx: Context, item_id: str, assignee_id: str) -> dict:
-    return await _post(ctx, f"/api/action-items/{item_id}/assign/", {"assigneeId": assignee_id})
+    return await _post(ctx, f"/api/action-items/{item_id}/assign/", {"assignedTo": [assignee_id]})
 
 
 @mcp.tool(description="Approve or reject a pending Vienna approval action.")
@@ -2853,6 +2916,7 @@ async def create_case_important_date(
     title: str,
     date: str,
     description: str | None = None,
+    assistant_excerpt: str | None = None,
     app_id: str | None = None,
 ) -> dict:
     payload = {
@@ -2905,7 +2969,8 @@ async def delete_case_important_date(ctx: Context, case_id: str, deadline_id: st
         "For a preview-first change, call with dry_run=true and stop for user confirmation; "
         "after the user confirms in a later message, repeat the request without dry_run. "
         "For acknowledge, omit approved for a no-write preview and set approved=true only after confirmation. "
-        "Supply app_id when the case ID exists in multiple products."
+        "Supply app_id when the case ID "
+        "exists in multiple products."
     )
 )
 async def edit_case_important_dates(
@@ -2920,10 +2985,10 @@ async def edit_case_important_dates(
     status: str | None = None,
     completed: bool | None = None,
     approved: bool | None = None,
-    dry_run: bool | None = None,
     source: str | None = None,
     raw_entry: str | None = None,
     app_id: str | None = None,
+    dry_run: bool | None = None,
 ) -> dict:
     payload: dict[str, object] = {"caseId": case_id, "operation": operation}
     optional_values = (
@@ -2935,9 +3000,9 @@ async def edit_case_important_dates(
         ("status", status),
         ("completed", completed),
         ("approved", approved),
-        ("dryRun", dry_run),
         ("source", source),
         ("rawEntry", raw_entry),
+        ("dryRun", dry_run),
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
@@ -3258,6 +3323,7 @@ async def create_signature_request(
     source_download_url: str | None = None,
     document_name: str | None = None,
     description: str | None = None,
+    assistant_excerpt: str | None = None,
     custom_message: str | None = None,
     mode: str | None = None,
     expires_in_days: int | None = None,
@@ -3272,6 +3338,7 @@ async def create_signature_request(
         ("sourceDownloadUrl", source_download_url),
         ("documentName", document_name),
         ("description", description),
+        ("assistantExcerpt", assistant_excerpt),
         ("customMessage", custom_message),
         ("mode", mode),
         ("expiresInDays", expires_in_days),
@@ -4253,8 +4320,9 @@ async def otter_get_workspace() -> dict:
 
 @mcp.tool(
     description=(
-        "Navigate the callable-function catalog. Omit category_id for the category and subgroup table of contents. "
-        "Pass a category_id to get all its tools, or add subcategory_id to narrow to one subgroup."
+        "Navigate the universal callable-function catalog in two calls: first omit category_id to get the "
+        "category and subgroup table of contents; then pass one returned category_id to get all tool records "
+        "in that category, or add a returned subcategory_id to get only that subgroup's records."
     )
 )
 async def browse_function_map(

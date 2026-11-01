@@ -323,12 +323,16 @@ _CHAT_RUN_TOOL_GUIDANCE = [
     {
         "name": "send_whatsapp_message",
         "operationIds": ["whatsapp-messages"],
-        "requiredInputs": ["caseId", "connectionId", "to", "message"],
+        "requiredInputs": ["caseId", "connectionId", "to", "message", "confirm"],
         "mutatesState": True,
         "sendsExternalMessage": True,
+        "requiresExplicitConfirmation": True,
         "invocationGuidance": (
-            "Send only from the connected firm's WhatsApp Business number after case "
-            "authorization; use an approved template when Meta requires one."
+            "First call without confirm=true to return a preview. Do not send until the user "
+            "explicitly approves that exact recipient and message; then retry with confirm=true. "
+            "A request to draft a message is not approval to send it. Send only from the connected "
+            "firm's WhatsApp Business number after case authorization; use an approved template "
+            "when Meta requires one."
         ),
     },
     {
@@ -886,6 +890,36 @@ FUNCTION_REGISTRY = MappingProxyType(_FUNCTIONS)
 # ID. Keep this small and evidence-backed: a name match alone does not prove a
 # compatible implementation or request contract.
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
+    "get_signature_request_detail": (
+        {
+            "name": "retrieve_signature_status",
+            "operationId": "retrieve-signature-status",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "requiresCaseId": True,
+            "inputSchemasBySurface": {
+                "intent_handler": {
+                    "type": "object",
+                    "properties": {
+                        "appId": {"type": "string"},
+                        "userId": {"type": "string"},
+                        "caseId": {"type": "string"},
+                        "signaturePacketId": {"type": "string"},
+                    },
+                    "required": ["appId", "userId", "caseId", "signaturePacketId"],
+                }
+            },
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "argumentBindings": {"signaturePacketId": "signature_id"},
+            "invocationGuidance": (
+                "Read only one signature request identified by the user; the request ID is not a company selector. "
+                "Always bind the request to the resolved trusted case_id and app_id; if either mismatches, "
+                "report that the request was not found in that company. "
+                "Use list_case_signatures for collection queries."
+            ),
+        },
+    ),
     "get_seriesai_company_details": (
         {
             "name": "retrieve_company_details",
@@ -1069,7 +1103,8 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
                 "and permits larger explicit requests; the shared endpoint accepts any positive resultLimit and "
                 "reports totalCount/truncated. The Django SeriesAI projection regression covers the legacy timeline "
                 "envelope, Slack summary/view, and email_body/text rendering. This mapping is scoped to apps 3/4; "
-                "deployed ChatProxy execution and authenticated Slack/email channel parity remain unverified. This read-only DynamoDB "
+                "deployed ChatProxy execution and authenticated Slack/email channel parity remain unverified. "
+                "This read-only DynamoDB "
                 "query uses deterministic filtering and does not perform AI inference."
             ),
         },
@@ -1078,6 +1113,8 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "retrieve-company-deadlines",
             "surfaces": ["intent_handler", "chat_proxy"],
             "verification": "operation_id_match_only",
+            "appIds": ["3", "4"],
+            "requiresCaseId": True,
             "inputSchemasBySurface": {
                 "intent_handler": {
                     "type": "object",
@@ -1367,13 +1404,6 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ("intent_handler",),
     ),
     (
-        "retrieve_signature_status",
-        "signatures_approvals",
-        "Show which Vienna signature requests are still waiting on signers.",
-        ("3", "4"),
-        ("intent_handler",),
-    ),
-    (
         "round_status_query",
         "company_operations",
         "Answer the status of a Vienna company's current financing round.",
@@ -1463,12 +1493,6 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "name": "edit_company_deadlines",
         "categoryId": "scheduling",
         "description": "Add, update, or delete a legacy company deadline and its associated timeline event.",
-    },
-    {
-        "functionId": "deadline_acknowledgment",
-        "name": "deadline_acknowledgment",
-        "categoryId": "scheduling",
-        "description": "Acknowledge and complete a named company deadline.",
     },
     {
         "functionId": "advance_lifecycle_stage",

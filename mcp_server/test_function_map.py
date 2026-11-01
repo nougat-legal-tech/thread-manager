@@ -33,6 +33,13 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all("inputSchema" in record for record in selected["functions"] if "mcp" in record["surfaces"])
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
+    communications = asyncio.run(server.browse_function_map(object(), "communications"))
+    whatsapp = next(
+        record for record in communications["functions"] if record["name"] == "send_whatsapp_message"
+    )
+    assert "confirm" in whatsapp["requiredInputs"]
+    assert whatsapp["requiresExplicitConfirmation"] is True
+
     company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
     company_details = next(
         record for record in company_operations["functions"] if record["name"] == "get_seriesai_company_details"
@@ -55,12 +62,32 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert timeline_alias["appIds"] == ["3", "4"]
     assert timeline_alias["defaultArguments"]["sort_order"] == "desc"
     assert timeline_alias["argumentBindings"]["lifecycleStage"] == "stage"
+    signature_details = asyncio.run(server.browse_function_map(object(), "signatures_approvals"))
+    signature_detail = next(
+        record for record in signature_details["functions"] if record["name"] == "get_signature_request_detail"
+    )
+    signature_status_alias = next(
+        alias for alias in signature_detail["callerAliases"] if alias["name"] == "retrieve_signature_status"
+    )
+    assert signature_status_alias["appIds"] == ["3", "4"]
+    assert signature_status_alias["requiresCaseId"] is True
+    assert signature_status_alias["argumentBindings"] == {"signaturePacketId": "signature_id"}
     deadlines_alias = next(
         alias for alias in important_dates["callerAliases"] if alias["name"] == "retrieve_company_deadlines"
     )
     assert deadlines_alias["verification"] == "operation_id_match_only"
+    assert deadlines_alias["appIds"] == ["3", "4"]
+    assert deadlines_alias["requiresCaseId"] is True
     assert deadlines_alias["defaultArguments"]["upcoming_only"] is True
     assert deadlines_alias["argumentBindings"]["openOnly"] == "open_only"
+
+    scheduling = asyncio.run(server.browse_function_map(object(), "scheduling"))
+    date_editor = next(record for record in scheduling["functions"] if record["name"] == "edit_case_important_dates")
+    acknowledgment_alias = next(
+        alias for alias in date_editor["callerAliases"] if alias["name"] == "deadline_acknowledgment"
+    )
+    assert acknowledgment_alias["verification"] == "verified_contract_mapping"
+    assert all(record["name"] != "deadline_acknowledgment" for record in scheduling["functions"])
 
     integrations = asyncio.run(server.browse_function_map(object(), "integrations_admin"))
     sharepoint_drives = next(
@@ -108,7 +135,7 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
             "lawsuit_generation",
             "strategic_digest",
         },
-        "scheduling": {"edit_company_deadlines", "deadline_acknowledgment"},
+        "scheduling": {"edit_company_deadlines"},
         "communications": {
             "archive_case_email_draft",
             "delete_case_email_message",

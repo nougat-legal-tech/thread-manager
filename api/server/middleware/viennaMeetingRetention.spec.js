@@ -69,6 +69,19 @@ describe('Vienna meeting retention grant', () => {
     expect(response.body.retention).toBeNull();
   });
 
+  test('requires the signed retention grant for Vienna meeting turns', async () => {
+    const response = await request(createApp())
+      .post('/chat')
+      .send({
+        channel: 'meeting',
+        conversationId: CONVERSATION_ID,
+        isTemporary: true,
+        expiredAt: NOW + 10,
+      });
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('meeting_retention_grant_required');
+  });
+
   test('applies signed owner- and conversation-bound expiry', async () => {
     const response = await request(createApp())
       .post('/chat')

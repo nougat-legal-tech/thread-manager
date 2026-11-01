@@ -108,6 +108,10 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 _CATEGORY_BY_ID = {category["id"]: category for category in FUNCTION_CATEGORIES}
+_FUNCTION_CATEGORY_OVERRIDES = {
+    # The case prefix is a resource scope; editing important dates is scheduling.
+    "edit_case_important_dates": "scheduling",
+}
 
 _FUNCTION_GROUPS: tuple[dict[str, Any], ...] = (
     {
@@ -152,6 +156,9 @@ _FUNCTION_GROUPS: tuple[dict[str, Any], ...] = (
 def categorize_function_name(name: Any) -> str:
     """Return one primary capability category or fail for an unmapped function."""
     normalized = str(name or "").strip()
+    override = _FUNCTION_CATEGORY_OVERRIDES.get(normalized.lower())
+    if override:
+        return override
     for category_id, pattern in _CATEGORY_PATTERNS:
         if pattern.search(normalized):
             return category_id

@@ -25,6 +25,14 @@ const getConversationId = (request) => {
 function applyViennaMeetingRetention(request, response, next) {
   const token = request.get('x-vienna-meeting-retention');
   if (!token) {
+    const body = request.body ?? {};
+    const isMeetingRequest =
+      body.channel === 'meeting' ||
+      body.sourceChannel === 'meeting' ||
+      body.metadata?.source === 'vienna_meeting';
+    if (isMeetingRequest) {
+      return response.status(401).json({ error: 'meeting_retention_grant_required' });
+    }
     return next();
   }
 
