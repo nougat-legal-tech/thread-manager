@@ -6,11 +6,11 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { logger } from '@librechat/data-schemas';
 
 export const RESPONSE_PROMPTS_BY_APP_ID = {
-  "1": { id: "juristai_app_1_federal_criminal", version: "3", key: "prompts/responses/federal-criminal.txt" },
-  "2": { id: "juristai_app_2_civil_legal_operations", version: "4", key: "prompts/responses/civil-legal-operations.txt" },
-  "3": { id: "juristai_app_3_seriesai_deal_lawyers", version: "1", key: "prompts/responses/seriesai-deal-lawyers.txt" },
-  "4": { id: "juristai_app_4_seriesai_founders_employees", version: "1", key: "prompts/responses/seriesai-founders-employees.txt" },
-  "5": { id: "juristai_app_5_in_house_account_manager", version: "1", key: "prompts/responses/in-house-account-manager.txt" },
+  "1": { id: "juristai_app_1_federal_criminal", version: "4", key: "prompts/responses/federal-criminal.txt" },
+  "2": { id: "juristai_app_2_civil_legal_operations", version: "5", key: "prompts/responses/civil-legal-operations.txt" },
+  "3": { id: "juristai_app_3_seriesai_deal_lawyers", version: "2", key: "prompts/responses/seriesai-deal-lawyers.txt" },
+  "4": { id: "juristai_app_4_seriesai_founders_employees", version: "2", key: "prompts/responses/seriesai-founders-employees.txt" },
+  "5": { id: "juristai_app_5_in_house_account_manager", version: "2", key: "prompts/responses/in-house-account-manager.txt" },
 } as const;
 
 const responsePromptS3 = new S3Client({});

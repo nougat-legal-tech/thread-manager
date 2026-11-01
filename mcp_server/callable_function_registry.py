@@ -1,4 +1,3 @@
-# Vendored from django-hub/jurist_backend/core/services/callable_function_registry.py
 """Canonical callable-function metadata consumed by existing Django surfaces.
 
 MCP wrappers and external callers are being migrated to this registry in stages.
@@ -945,6 +944,80 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "requiresCaseId": True,
         },
     ),
+    "get_seriesai_revenue_metrics": (
+        {
+            "name": "retrieve_company_revenue",
+            "operationId": "retrieve-company-revenue",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+            "invocationGuidance": (
+                "Read connected revenue metrics for the trusted SeriesAI company only. "
+                "Do not report an unconnected connector as zero."
+            ),
+        },
+    ),
+    "get_seriesai_recent_sales": (
+        {
+            "name": "retrieve_company_sales",
+            "operationId": "retrieve-company-sales",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+            "invocationGuidance": (
+                "Read recent connected sales for the trusted SeriesAI company only. "
+                "Do not report an unconnected connector as zero."
+            ),
+        },
+    ),
+    "get_seriesai_marketing_performance": (
+        {
+            "name": "retrieve_company_marketing_performance",
+            "operationId": "retrieve-company-marketing-performance",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+        },
+    ),
+    "get_seriesai_web_analytics": (
+        {
+            "name": "retrieve_company_web_analytics",
+            "operationId": "retrieve-company-web-analytics",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+        },
+    ),
+    "list_seriesai_upcoming_campaigns": (
+        {
+            "name": "retrieve_company_upcoming_campaigns",
+            "operationId": "retrieve-company-upcoming-campaigns",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+        },
+    ),
+    "list_seriesai_marketing_automations": (
+        {
+            "name": "retrieve_company_marketing_automations",
+            "operationId": "retrieve-company-marketing-automations",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+        },
+    ),
     "edit_case_important_dates": (
         {
             "name": "deadline_acknowledgment",
@@ -1726,13 +1799,18 @@ def resolve_universal_function_id(identifier: Any, records: list[dict[str, Any]]
         canonical_id = str(record.get("functionId") or record.get("name") or "").strip()
         if not canonical_id:
             continue
-        identifiers = [canonical_id, str(record.get("name") or "").strip()]
-        operation_ids = record.get("operationIds")
-        if isinstance(operation_ids, list):
-            identifiers.extend(str(value).strip() for value in operation_ids)
-        for value in identifiers:
-            if value:
-                aliases.setdefault(value, set()).add(canonical_id)
+        # IntentHandler-only inventory rows document legacy names but are not
+        # callable through MCP. When a verified caller alias maps one of those
+        # names to a canonical MCP operation, resolve to that operation instead
+        # of treating the inventory row as a competing implementation.
+        if record.get("metadataStatus") != "legacy_caller_only":
+            identifiers = [canonical_id, str(record.get("name") or "").strip()]
+            operation_ids = record.get("operationIds")
+            if isinstance(operation_ids, list):
+                identifiers.extend(str(value).strip() for value in operation_ids)
+            for value in identifiers:
+                if value:
+                    aliases.setdefault(value, set()).add(canonical_id)
         caller_aliases = record.get("callerAliases")
         if isinstance(caller_aliases, list):
             for alias in caller_aliases:
