@@ -293,7 +293,7 @@ def test_send_whatsapp_message_dispatches_only_after_confirmation(monkeypatch):
         ("client", "Bearer signed-user-token"),
         (
             "POST",
-            "/api/integrations/whatsapp/messages",
+            "/api/core/integrations/whatsapp/messages",
             {
                 "content": '{"connectionId": "connection-1", "caseId": "case-1", "to": "+15551234567", "message": "Please review the attached draft."}',
             },
