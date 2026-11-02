@@ -1205,9 +1205,15 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "retrieve_company_deadlines",
             "operationId": "retrieve-company-deadlines",
             "surfaces": ["intent_handler", "chat_proxy"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_contract_mapping",
             "appIds": ["3", "4"],
             "requiresCaseId": True,
+            "invocationGuidance": (
+                "For a company-deadline lookup, include legacy company deadlines and upcoming deadlines. "
+                "Use the user's full request to decide whether this is a compliance-only question: set "
+                "exclude_external_calendar=true only for compliance-only requests; retain calendar events "
+                "for general schedule questions. Make this decision from context, not keyword matching."
+            ),
             "inputSchemasBySurface": {
                 "intent_handler": {
                     "type": "object",
@@ -1237,19 +1243,17 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
                 "resultLimit": "result_limit",
             },
             "notes": (
-                "Candidate contract for the legacy upcoming-deadline read. Django authenticates the caller; "
-                "userId is not forwarded as a query parameter. Use AI interpretation of the user's question to "
-                "set exclude_external_calendar=true for compliance-only requests; general schedule requests "
-                "retain calendar events. The "
+                "Verified caller mapping for the legacy company-deadline read. Django authenticates the caller; "
+                "userId and free-text query are not forwarded as API filters. The agent interprets the original "
+                "request and sets exclude_external_calendar=true only for compliance-only requests; general "
+                "schedule requests retain calendar events. The "
                 "shared endpoint's includeLegacyCompanyDeadlines projection merges app-scoped timeline and "
                 "embedded deadlines, considers only dated timeline candidates, uses exact date/label duplicate "
                 "matching with embedded-record precedence, filters external-calendar rows to the authenticated "
                 "user, and defaults undated embedded deadlines to seven days ahead. The SeriesAI response "
                 "projection exposes the legacy deadlines/email/Slack summary shape, and the shared endpoint "
-                "supports any positive resultLimit as the legacy read does. The legacy Lambda's regex keyword "
-                "classification is replaced by the agent's contextual interpretation; keep this alias "
-                "unverified until that AI-selected compliance filter and authenticated ChatProxy/channel "
-                "parity are covered by integration evidence."
+                "supports any positive resultLimit. Contract tests cover the compatibility projection; live "
+                "authenticated ChatProxy and Slack/email parity remain unverified."
             ),
         },
     ),
