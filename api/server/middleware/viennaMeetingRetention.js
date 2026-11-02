@@ -77,6 +77,7 @@ function applyViennaMeetingRetention(request, response, next) {
   request._agentEventBindingRetention = {
     isTemporary: true,
     expiredAt: new Date(expiresAt * 1000),
+    suppressLangfuseTracing: true,
   };
   return next();
 }

@@ -79,6 +79,31 @@ describe('buildLangfuseConfig', () => {
     });
   });
 
+  it('suppresses every Langfuse destination for meeting-retained runs', async () => {
+    process.env.LANGFUSE_PUBLIC_KEY = 'pk-env';
+    process.env.LANGFUSE_SECRET_KEY = 'sk-env';
+    process.env.LANGFUSE_FANOUT_ENABLED = 'true';
+    process.env.LANGFUSE_FANOUT_COLLECTOR_URL = 'http://langfuse-fanout:4318';
+    const { buildLangfuseConfig } = await import('./config');
+
+    expect(
+      buildLangfuseConfig({
+        runId: 'meeting-run-1',
+        tenantId: 'tenant-1',
+        suppressTracing: true,
+        appConfig: {
+          langfuse: {
+            enabled: true,
+            publicKey: 'pk-tenant',
+            secretKey: 'sk-tenant',
+            destination: 'us',
+          },
+        } as unknown as AppConfig,
+        traceContext: { conversationId: 'meeting-conversation-1' },
+      }),
+    ).toEqual({ deterministicTraceId: true, enabled: false });
+  });
+
   it('stamps the configured trace identity and allowlisted metadata on the run config', async () => {
     delete process.env.TENANT_ISOLATION_STRICT;
     process.env.LANGFUSE_PUBLIC_KEY = 'pk-env';

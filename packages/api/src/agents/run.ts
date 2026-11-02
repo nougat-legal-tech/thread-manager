@@ -2111,6 +2111,7 @@ export async function createRun({
   user,
   tenantId,
   centralTraceExportEnabled,
+  suppressLangfuseTracing = false,
   traceContext,
   tokenCounter,
   customHandlers,
@@ -2157,6 +2158,8 @@ export async function createRun({
    * run. Tenant fanout can still export when tenant routing is available.
    */
   centralTraceExportEnabled?: boolean;
+  /** Disables all Langfuse export for content with a stricter retention contract. */
+  suppressLangfuseTracing?: boolean;
   /**
    * Request values the deployment may export as Langfuse trace metadata
    * (`langfuse.trace.conversationMetadataFields`). The conversation id,
@@ -3011,6 +3014,7 @@ export async function createRun({
       runId: resolvedRunId,
       tenantId: tenantId ?? user?.tenantId,
       centralTraceExportEnabled,
+      suppressTracing: suppressLangfuseTracing,
       user,
       traceContext: resolveRunTraceContext({ agents, conversationId, requestBody, traceContext }),
     }),

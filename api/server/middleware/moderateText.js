@@ -14,7 +14,9 @@ const denyRequest = require('./denyRequest');
 const CLAUDE_MODEL = 'claude-haiku-5-5';
 const CLAUDE_VERSION = '2026-10-21';
 const MODERATION_BEDROCK_MODEL = process.env.MODERATION_BEDROCK_MODEL || 'amazon.nova-micro-v1:0';
-const moderationBedrock = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const moderationBedrock = new BedrockRuntimeClient({
+  region: process.env.AWS_REGION || 'us-east-1',
+});
 
 function getAnthropicApiKey() {
   const configured = process.env.ANTHROPIC_API_KEY;
@@ -40,8 +42,11 @@ function getAnthropicApiKey() {
 
 function parseFallbackModeration(text, inputCount) {
   const parsed = JSON.parse(text);
-  if (!Array.isArray(parsed?.results) || parsed.results.length !== inputCount ||
-      parsed.results.some((result) => typeof result?.flagged !== 'boolean')) {
+  if (
+    !Array.isArray(parsed?.results) ||
+    parsed.results.length !== inputCount ||
+    parsed.results.some((result) => typeof result?.flagged !== 'boolean')
+  ) {
     throw new Error('Invalid moderation fallback response');
   }
   return parsed.results;
@@ -54,12 +59,18 @@ async function moderateWithClaudeThenBedrock(input) {
     'Do not flag neutral discussion, reporting, prevention, or legal analysis of these topics. Be conservative when intent is unclear: set flagged to true.',
     'Return only JSON in the exact shape {"results":[{"flagged":true|false},...]}, with one result per input in the same order.',
   ].join(' ');
-  const messages = [{ role: 'user', content: JSON.stringify({ inputs: Array.isArray(input) ? input : [input] }) }];
+  const messages = [
+    { role: 'user', content: JSON.stringify({ inputs: Array.isArray(input) ? input : [input] }) },
+  ];
   const apiKey = getAnthropicApiKey();
 
   if (apiKey) {
     try {
-      const headers = { 'x-api-key': apiKey, 'anthropic-version': CLAUDE_VERSION, 'content-type': 'application/json' };
+      const headers = {
+        'x-api-key': apiKey,
+        'anthropic-version': CLAUDE_VERSION,
+        'content-type': 'application/json',
+      };
       const countResponse = await axios.post(
         'https://api.anthropic.com/v1/messages/count_tokens',
         { model: CLAUDE_MODEL, system, messages },
@@ -80,16 +91,20 @@ async function moderateWithClaudeThenBedrock(input) {
         .join('');
       return parseFallbackModeration(text, Array.isArray(input) ? input.length : 1);
     } catch (error) {
-      logger.warn('Claude moderation fallback failed; trying Bedrock', { errorType: error?.name || 'Error' });
+      logger.warn('Claude moderation fallback failed; trying Bedrock', {
+        errorType: error?.name || 'Error',
+      });
     }
   }
 
-  const response = await moderationBedrock.send(new ConverseCommand({
-    modelId: MODERATION_BEDROCK_MODEL,
-    system: [{ text: system }],
-    messages: [{ role: 'user', content: [{ text: messages[0].content }] }],
-    inferenceConfig: { maxTokens: 256, temperature: 0 },
-  }));
+  const response = await moderationBedrock.send(
+    new ConverseCommand({
+      modelId: MODERATION_BEDROCK_MODEL,
+      system: [{ text: system }],
+      messages: [{ role: 'user', content: [{ text: messages[0].content }] }],
+      inferenceConfig: { maxTokens: 256, temperature: 0 },
+    }),
+  );
   const text = (response.output?.message?.content || []).map((block) => block.text || '').join('');
   return parseFallbackModeration(text, Array.isArray(input) ? input.length : 1);
 }
@@ -183,12 +198,17 @@ async function moderateText(req, res, next) {
         },
       );
       results = response.data.results;
-      if (!Array.isArray(results) || results.length !== (Array.isArray(input) ? input.length : 1) ||
-          results.some((result) => typeof result?.flagged !== 'boolean')) {
+      if (
+        !Array.isArray(results) ||
+        results.length !== (Array.isArray(input) ? input.length : 1) ||
+        results.some((result) => typeof result?.flagged !== 'boolean')
+      ) {
         throw new Error('Invalid OpenAI moderation response');
       }
     } catch (error) {
-      logger.warn('OpenAI moderation failed; trying Claude then Bedrock', { errorType: error?.name || 'Error' });
+      logger.warn('OpenAI moderation failed; trying Claude then Bedrock', {
+        errorType: error?.name || 'Error',
+      });
       results = await moderateWithClaudeThenBedrock(input);
     }
     const flagged = results.some((result) => result.flagged);

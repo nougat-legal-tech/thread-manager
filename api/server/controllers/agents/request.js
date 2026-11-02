@@ -474,11 +474,13 @@ async function saveErrorTurn(
         throw new Error('Failed user message could not be persisted');
       }
     }
-    const langfuseTraceFields = await getFailedTurnTraceFields(req.config, {
-      messageId: errorMessageId,
-      runId: liveResponseMessageId,
-      runCreated,
-    });
+    const langfuseTraceFields = req?._agentEventBindingRetention?.suppressLangfuseTracing
+      ? {}
+      : await getFailedTurnTraceFields(req.config, {
+          messageId: errorMessageId,
+          runId: liveResponseMessageId,
+          runCreated,
+        });
     const savedErrorMessage = await saveMessage(
       reqCtx,
       {
@@ -2238,8 +2240,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
       } else {
         job.abortController.signal.addEventListener('abort', abortTitleOnJobAbort, { once: true });
       }
-      const titleEligible =
-        addTitle && isTitleEligibleTurn && !req.body?.isTemporary;
+      const titleEligible = addTitle && isTitleEligibleTurn && !req.body?.isTemporary;
       const emitTitleEvent = ({ conversationId: titleConversationId, title }) => {
         titleEventPromise = (async () => {
           if (!acceptsTitleEvents || titleAbortController.signal.aborted) {
@@ -2956,10 +2957,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         }
 
         const shouldGenerateTitle =
-          addTitle &&
-          isTitleEligibleTurn &&
-          !terminalWasAborted &&
-          !preemptIncomplete;
+          addTitle && isTitleEligibleTurn && !terminalWasAborted && !preemptIncomplete;
 
         // Save user message BEFORE sending final event to avoid race condition
         // where client refetch happens before database is updated

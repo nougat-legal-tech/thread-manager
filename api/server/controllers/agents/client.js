@@ -288,6 +288,10 @@ function buildTraceContext(options) {
   };
 }
 
+function shouldSuppressLangfuseTracing(req) {
+  return req?._agentEventBindingRetention?.suppressLangfuseTracing === true;
+}
+
 function resolveRunSeeds(client) {
   const prevMeta = client.contextMeta;
   if (prevMeta == null) {
@@ -5029,6 +5033,7 @@ class AgentClient extends BaseClient {
           requestBody: config.configurable.requestBody,
           codeApprovalMode,
           user: createSafeUser(this.options.req?.user),
+          suppressLangfuseTracing: shouldSuppressLangfuseTracing(this.options.req),
           traceContext: buildTraceContext(this.options),
           tenantId: resolveRequestTenantId(this.options.req ?? {}),
           summarizationConfig: appConfig?.summarization,
@@ -5807,6 +5812,7 @@ class AgentClient extends BaseClient {
         requestBody: config.configurable.requestBody,
         codeApprovalMode: this.options.req.body.codeApprovalMode,
         user: createSafeUser(this.options.req?.user),
+        suppressLangfuseTracing: shouldSuppressLangfuseTracing(this.options.req),
         traceContext: buildTraceContext(this.options),
         tenantId: resolveRequestTenantId(this.options.req ?? {}),
         summarizationConfig: appConfig?.summarization,
@@ -6308,5 +6314,6 @@ class AgentClient extends BaseClient {
 }
 
 AgentClient.buildTraceContext = buildTraceContext;
+AgentClient.shouldSuppressLangfuseTracing = shouldSuppressLangfuseTracing;
 
 module.exports = AgentClient;

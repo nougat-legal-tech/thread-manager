@@ -60,6 +60,35 @@ def test_mcp_case_tool_passes_caller_token_and_case_scope_to_django(monkeypatch)
     ]
 
 
+def test_assign_action_item_forwards_vienna_identity_with_authenticated_caller(monkeypatch):
+    tokens = []
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda token: tokens.append(token) or _Client(calls))
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"authorization": "Bearer signed-user-token"})
+        )
+    )
+
+    result = _run_mock_async(
+        server.assign_action_item(
+            ctx,
+            item_id="task-123",
+            assignee_id="vienna@nougat.law",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert tokens == ["Bearer signed-user-token"]
+    assert calls == [
+        (
+            "POST",
+            "/api/core/action-items/task-123/assign/",
+            {"content": '{"assignedTo": ["vienna@nougat.law"]}'},
+        ),
+    ]
+
+
 def test_mcp_create_new_unfiled_matter_forwards_without_case_or_docket_id(monkeypatch):
     calls = []
     monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))

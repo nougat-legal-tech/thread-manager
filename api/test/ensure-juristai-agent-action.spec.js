@@ -11,6 +11,7 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createMethods, agentSchema, actionSchema } = require('@librechat/data-schemas');
+const { openapiToFunction, validateAndParseOpenAPISpec } = require('librechat-data-provider');
 
 const { ensureJuristaiAgentAction } = require('../../config/ensure-juristai-agent-action');
 
@@ -36,6 +37,25 @@ const STAGED_SAFE_SPEC_PATH = require('path').resolve(
 const EXPECTED_TOOL_COUNT = Object.values(
   JSON.parse(require('fs').readFileSync(SPEC_PATH, 'utf8')).paths,
 ).reduce((count, methods) => count + Object.keys(methods).length, 0);
+
+test('JuristAI agent action includes the task tools Vienna needs to read, assign, update, and complete tasks', () => {
+  const rawSpec = require('fs').readFileSync(SPEC_PATH, 'utf8');
+  const validation = validateAndParseOpenAPISpec(rawSpec);
+
+  expect(validation.status).toBe(true);
+  const { functionSignatures } = openapiToFunction(validation.spec, true);
+  const toolNames = functionSignatures.map((signature) => signature.toObjectTool().function.name);
+
+  expect(toolNames).toEqual(
+    expect.arrayContaining([
+      'list-action-items',
+      'create-action-item',
+      'update-action-item',
+      'assign-action-item',
+      'complete-action-item',
+    ]),
+  );
+});
 
 describe('ensure-juristai-agent-action (infra-as-code guard)', () => {
   let mongoServer;

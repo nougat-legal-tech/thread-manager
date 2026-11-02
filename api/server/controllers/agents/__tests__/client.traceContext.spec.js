@@ -36,3 +36,19 @@ describe('AgentClient.buildTraceContext', () => {
     });
   });
 });
+
+describe('AgentClient.shouldSuppressLangfuseTracing', () => {
+  it('suppresses tracing only for the verified meeting-retention binding', () => {
+    expect(
+      AgentClient.shouldSuppressLangfuseTracing({
+        _agentEventBindingRetention: { isTemporary: true, suppressLangfuseTracing: true },
+      }),
+    ).toBe(true);
+    expect(
+      AgentClient.shouldSuppressLangfuseTracing({
+        body: { isTemporary: true },
+        resolvedConversation: { isTemporary: true },
+      }),
+    ).toBe(false);
+  });
+});

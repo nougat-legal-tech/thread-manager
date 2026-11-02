@@ -939,6 +939,36 @@ _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES = (
     "list_seriesai_outbound_emails",
     "list_seriesai_signer_suggestions",
 )
+_SERIESAI_CALLER_DESCRIPTIONS = {
+    "get_seriesai_cap_table_state": "Read current Vienna ownership, stakeholder holdings, share totals, and warnings.",
+    "list_seriesai_cap_table_transactions": "List committed Vienna equity transactions.",
+    "list_seriesai_cap_table_scenarios": "List uncommitted Vienna cap-table scenarios and projections.",
+    "list_seriesai_issuance_workflows": "List Vienna financing and equity issuance workflows.",
+    "get_seriesai_revenue_metrics": "Read connected Stripe revenue, MRR/ARR, customers, subscriptions, and trend data.",
+    "get_seriesai_recent_sales": "Read recent connected Stripe sales, customers, subscriptions, payouts, products, and balances.",
+    "get_seriesai_marketing_performance": "Read Mailchimp campaign sends, opens, clicks, and rates. Pass count when the user requests a specific number of campaigns; otherwise omit it.",
+    "get_seriesai_web_analytics": "Read connected Google Analytics traffic and web analytics. Pass days when the user requests a specific lookback period; otherwise omit it.",
+    "get_seriesai_connector_status": "Check whether Stripe, Mailchimp, Google Analytics, and Carta connectors are linked and healthy; imported Carta cap-table data is available in company context.",
+    "list_seriesai_upcoming_campaigns": "List scheduled or draft Mailchimp campaigns that have not been sent.",
+    "list_seriesai_marketing_automations": "List Mailchimp automations and customer journeys with status and counts.",
+    "list_seriesai_document_templates": "Read-only: list the document templates the Vienna company workspace can generate, including when the user asks which document types are available or can be generated. This is the generation catalog, not a list of files already uploaded; do not start generation.",
+    "list_seriesai_document_amendments": "List which amendments apply to an existing Vienna corporate document (add a cofounder, authorize more shares, amend an agreement, amend the bylaws) and the instruments each would draft. Read-only; nothing is generated.",
+    "list_seriesai_document_runs": "List resumable and completed Vienna document-generation runs.",
+    "get_seriesai_document_run": "Read one scoped Vienna document-generation run and its current status.",
+    "list_seriesai_billing_invoices": "List Vienna billing invoices and payment status for the company workspace.",
+    "get_seriesai_billing_invoice": "Read one Vienna billing invoice by id.",
+    "list_seriesai_audit_events": "List scoped Vienna audit events for diligence and operational review.",
+    "get_seriesai_sales_metrics": "Read the normalized Vienna sales and revenue metrics snapshot.",
+    "get_seriesai_marketing_metrics": "Read the normalized Vienna marketing metrics snapshot.",
+    "get_seriesai_analytics_metrics": "Read the normalized Vienna web and product analytics snapshot.",
+    "list_seriesai_stock_plans": "List Vienna equity and stock plans for the company workspace.",
+    "list_seriesai_pending_actions": "List pending Vienna approval actions without resolving or mutating them.",
+    "list_seriesai_email_messages": "List scoped Vienna email messages and mapped correspondence.",
+    "get_seriesai_email_thread": "Read a scoped Vienna email thread by message identifier.",
+    "list_seriesai_email_attachments": "List attachments associated with a scoped Vienna email message.",
+    "list_seriesai_outbound_emails": "List scoped Vienna outbound email queue records and delivery status.",
+    "list_seriesai_signer_suggestions": "List ranked signer suggestions for a Vienna document or financing workflow.",
+}
 for _function_name in _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES:
     MCP_FUNCTION_METADATA.setdefault(_function_name, {}).update(
         {
@@ -947,6 +977,9 @@ for _function_name in _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES:
             "sendsUserEmail": False,
             "startsAsyncWorkflow": False,
             "returnsInlineResult": True,
+            "callerDescriptionsBySurface": {
+                "chat_proxy": _SERIESAI_CALLER_DESCRIPTIONS[_function_name],
+            },
         }
     )
 
@@ -968,6 +1001,34 @@ MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
 }
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
+    "advance_lifecycle_stage": (
+        {
+            "name": "advance_lifecycle_stage",
+            "operationId": "advance-lifecycle-stage",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "requiresCaseId": True,
+            "trustedScopeBindings": {"caseId": "caseId", "appId": "appId"},
+            "inputSchemasBySurface": {
+                "intent_handler": {
+                    "type": "object",
+                    "properties": {
+                        "appId": {"type": "string"},
+                        "userId": {"type": "string"},
+                        "caseId": {"type": "string"},
+                        "lifecycleStage": {"type": "string"},
+                        "dryRun": {"type": "boolean"},
+                    },
+                    "required": ["appId", "userId", "caseId", "lifecycleStage"],
+                },
+            },
+            "invocationGuidance": (
+                "Use the requested lifecycleStage and trusted caseId/appId. For Slack requests, preserve "
+                "dryRun=true for the preview; only approved=true from explicit user confirmation may commit it."
+            ),
+        },
+    ),
     "get_signature_request_detail": (
         {
             "name": "retrieve_signature_status",

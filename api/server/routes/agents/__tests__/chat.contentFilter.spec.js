@@ -1,5 +1,7 @@
 const mockGetFiles = jest.fn();
-const mockCreateMessageFilterPii = jest.fn(() => (_req, _res, next) => next());
+const mockPiiMiddleware = jest.fn((_req, _res, next) => next());
+const mockModerateText = jest.fn((_req, _res, next) => next());
+const mockCreateMessageFilterPii = jest.fn(() => mockPiiMiddleware);
 const mockGetSafeErrorMetadata = jest.fn((error) => ({
   type: error instanceof Error ? 'Error' : 'UnknownError',
   ...(Number.isInteger(error?.response?.status) && { status: error.response.status }),
@@ -24,7 +26,7 @@ jest.mock('@librechat/api', () => ({
 }));
 
 jest.mock('~/server/middleware', () => ({
-  moderateText: (_req, _res, next) => next(),
+  moderateText: mockModerateText,
   validateConvoAccess: (_req, _res, next) => next(),
   buildEndpointOption: (_req, _res, next) => next(),
   canAccessAgentFromBody: jest.fn(() => (_req, _res, next) => next()),
@@ -51,6 +53,18 @@ describe('agents chat content filtering', () => {
     expect(mockCreateMessageFilterPii.mock.calls[0][0]).toMatchObject({
       getFiles: mockGetFiles,
     });
+  });
+
+  it('registers meeting retention before transcript content filters', () => {
+    const router = require('../chat');
+    const middleware = router.stack.map((layer) => layer.handle);
+    const retentionIndex = middleware.findIndex(
+      (handler) => handler.name === 'applyViennaMeetingRetention',
+    );
+
+    expect(retentionIndex).toBeGreaterThanOrEqual(0);
+    expect(retentionIndex).toBeLessThan(middleware.indexOf(mockPiiMiddleware));
+    expect(retentionIndex).toBeLessThan(middleware.indexOf(mockModerateText));
   });
 
   it('logs only bounded metadata when resume context restoration fails', async () => {

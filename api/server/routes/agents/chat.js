@@ -72,6 +72,7 @@ const restoreResumeContext = async (req, res, next) => {
 };
 
 router.use(restoreResumeContext);
+router.use(applyViennaMeetingRetention);
 router.use(
   createMessageFilterPii({
     onTraversalFailure: reportLocatorTraversalFailure,
@@ -85,7 +86,6 @@ router.use(checkAgentAccess);
 router.use(checkAgentResourceAccess);
 router.use(validateConvoAccess);
 router.use(guardSubagentThreadTurn);
-router.use(applyViennaMeetingRetention);
 router.use(buildEndpointOption);
 
 const controller = async (req, res, next) => {

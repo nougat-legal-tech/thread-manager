@@ -250,6 +250,7 @@ export function buildLangfuseConfig({
   runId,
   tenantId,
   centralTraceExportEnabled = true,
+  suppressTracing = false,
   user,
   traceContext,
 }: {
@@ -262,6 +263,8 @@ export function buildLangfuseConfig({
    * to drop the central pipeline while preserving tenant fanout when available.
    */
   centralTraceExportEnabled?: boolean;
+  /** Disables all Langfuse export for this run, including tenant fanout. */
+  suppressTracing?: boolean;
   /** The requesting user, read only for the fields `langfuse.trace` allowlists. */
   user?: LangfuseTraceUser;
   /** Request values `langfuse.trace.conversationMetadataFields` may export. */
@@ -269,6 +272,10 @@ export function buildLangfuseConfig({
 } = {}): LangfuseRunConfig {
   const normalizedTenantId = normalizeString(tenantId);
   const config = appConfig?.langfuse;
+
+  if (suppressTracing) {
+    return { deterministicTraceId: true, enabled: false };
+  }
 
   const langfuse: LangfuseRunConfigWithTraceAttributes = {
     deterministicTraceId: true,

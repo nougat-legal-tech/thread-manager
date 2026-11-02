@@ -1,6 +1,4 @@
-const express = require('express');
 const jwt = require('jsonwebtoken');
-const request = require('supertest');
 const applyViennaMeetingRetention = require('./viennaMeetingRetention');
 
 const SECRET = 'vienna-meeting-retention-test-secret';
@@ -25,22 +23,29 @@ const createGrant = (overrides = {}, secret = SECRET) =>
     { algorithm: 'HS256' },
   );
 
-const createApp = () => {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    req.user = { id: OWNER_ID };
-    next();
-  });
-  app.use(applyViennaMeetingRetention);
-  app.post('/chat', (req, res) =>
-    res.json({
-      retention: req._agentEventBindingRetention ?? null,
-      bodyTemporary: req.body.isTemporary ?? false,
-      bodyExpiry: req.body.expiredAt ?? null,
+const invokeRetention = ({ token, body = {}, userId = OWNER_ID } = {}) => {
+  const req = {
+    body,
+    user: { id: userId },
+    get: jest.fn((headerName) =>
+      headerName.toLowerCase() === 'x-vienna-meeting-retention' ? token : undefined,
+    ),
+  };
+  const res = {
+    statusCode: 200,
+    body: undefined,
+    status: jest.fn(function setStatus(statusCode) {
+      this.statusCode = statusCode;
+      return this;
     }),
-  );
-  return app;
+    json: jest.fn(function setBody(body) {
+      this.body = body;
+      return this;
+    }),
+  };
+  const next = jest.fn();
+  applyViennaMeetingRetention(req, res, next);
+  return { req, res, next };
 };
 
 describe('Vienna meeting retention grant', () => {
@@ -61,35 +66,40 @@ describe('Vienna meeting retention grant', () => {
     }
   });
 
-  test('ignores body-only temporary and expiry claims', async () => {
-    const response = await request(createApp())
-      .post('/chat')
-      .send({ conversationId: CONVERSATION_ID, isTemporary: true, expiredAt: NOW + 10 });
-    expect(response.status).toBe(200);
-    expect(response.body.retention).toBeNull();
+  test('ignores body-only temporary and expiry claims', () => {
+    const { req, next, res } = invokeRetention({
+      body: { conversationId: CONVERSATION_ID, isTemporary: true, expiredAt: NOW + 10 },
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req._agentEventBindingRetention).toBeUndefined();
+    expect(res.status).not.toHaveBeenCalled();
   });
 
-  test('requires the signed retention grant for Vienna meeting turns', async () => {
-    const response = await request(createApp())
-      .post('/chat')
-      .send({
+  test('requires the signed retention grant for Vienna meeting turns', () => {
+    const { next, res } = invokeRetention({
+      body: {
         channel: 'meeting',
         conversationId: CONVERSATION_ID,
         isTemporary: true,
         expiredAt: NOW + 10,
-      });
-    expect(response.status).toBe(401);
-    expect(response.body.error).toBe('meeting_retention_grant_required');
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'meeting_retention_grant_required' });
   });
 
-  test('applies signed owner- and conversation-bound expiry', async () => {
-    const response = await request(createApp())
-      .post('/chat')
-      .set('X-Vienna-Meeting-Retention', createGrant())
-      .send({ conversationId: CONVERSATION_ID });
-    expect(response.status).toBe(200);
-    expect(response.body.retention.isTemporary).toBe(true);
-    expect(response.body.retention.expiredAt).toBe(new Date((NOW + 60) * 1000).toISOString());
+  test('applies signed owner- and conversation-bound expiry', () => {
+    const { req, next } = invokeRetention({
+      token: createGrant(),
+      body: { conversationId: CONVERSATION_ID },
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req._agentEventBindingRetention).toEqual({
+      isTemporary: true,
+      expiredAt: new Date((NOW + 60) * 1000),
+      suppressLangfuseTracing: true,
+    });
   });
 
   test.each([
@@ -99,28 +109,33 @@ describe('Vienna meeting retention grant', () => {
     ['non-temporary claim', { isTemporary: false }],
     ['expired grant', { exp: NOW - 1 }],
     ['overlong grant', { exp: NOW + 24 * 60 * 60 + 1 }],
-  ])('rejects %s', async (_label, claims) => {
-    const response = await request(createApp())
-      .post('/chat')
-      .set('X-Vienna-Meeting-Retention', createGrant(claims))
-      .send({ conversationId: CONVERSATION_ID });
-    expect(response.status).toBe(401);
+  ])('rejects %s', (_label, claims) => {
+    const { next, res } = invokeRetention({
+      token: createGrant(claims),
+      body: { conversationId: CONVERSATION_ID },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
   });
 
-  test('rejects a grant signed with a different secret', async () => {
-    const response = await request(createApp())
-      .post('/chat')
-      .set('X-Vienna-Meeting-Retention', createGrant({}, 'wrong-secret'))
-      .send({ conversationId: CONVERSATION_ID });
-    expect(response.status).toBe(401);
+  test('rejects a grant signed with a different secret', () => {
+    const { next, res } = invokeRetention({
+      token: createGrant({}, 'wrong-secret'),
+      body: { conversationId: CONVERSATION_ID },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'invalid_meeting_retention_grant' });
   });
 
-  test('fails closed when the signing secret is unavailable', async () => {
+  test('fails closed when the signing secret is unavailable', () => {
     delete process.env.CHAT_SECRET;
-    const response = await request(createApp())
-      .post('/chat')
-      .set('X-Vienna-Meeting-Retention', createGrant())
-      .send({ conversationId: CONVERSATION_ID });
-    expect(response.status).toBe(503);
+    const { next, res } = invokeRetention({
+      token: createGrant(),
+      body: { conversationId: CONVERSATION_ID },
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ error: 'meeting_retention_unavailable' });
   });
 });

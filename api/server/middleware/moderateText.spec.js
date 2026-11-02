@@ -5,7 +5,9 @@ const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
 
 jest.mock('axios', () => ({ post: jest.fn() }));
 jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
-  BedrockRuntimeClient: jest.fn().mockImplementation(() => ({ send: (...args) => mockBedrockSend(...args) })),
+  BedrockRuntimeClient: jest
+    .fn()
+    .mockImplementation(() => ({ send: (...args) => mockBedrockSend(...args) })),
   ConverseCommand: jest.fn().mockImplementation((input) => ({ input })),
   mockBedrockSend: jest.fn(),
 }));
@@ -51,21 +53,26 @@ describe('moderateText', () => {
   });
 
   it('uses Claude Haiku after OpenAI moderation fails', async () => {
-    axios.post.mockRejectedValueOnce(new Error('OpenAI unavailable'))
+    axios.post
+      .mockRejectedValueOnce(new Error('OpenAI unavailable'))
       .mockResolvedValueOnce({ data: { input_tokens: 12 } })
-      .mockResolvedValueOnce({ data: { content: [{ type: 'text', text: '{"results":[{"flagged":true}]}' }] } });
+      .mockResolvedValueOnce({
+        data: { content: [{ type: 'text', text: '{"results":[{"flagged":true}]}' }] },
+      });
     const req = { body: { text: 'unsafe request' } };
     const res = {};
     const next = jest.fn();
 
     await moderateText(req, res, next);
 
-    expect(axios.post).toHaveBeenNthCalledWith(2,
+    expect(axios.post).toHaveBeenNthCalledWith(
+      2,
       'https://api.anthropic.com/v1/messages/count_tokens',
       expect.objectContaining({ model: 'claude-haiku-5-5' }),
       expect.objectContaining({ headers: expect.objectContaining({ 'x-api-key': 'test-key' }) }),
     );
-    expect(axios.post).toHaveBeenNthCalledWith(3,
+    expect(axios.post).toHaveBeenNthCalledWith(
+      3,
       'https://api.anthropic.com/v1/messages',
       expect.objectContaining({ model: 'claude-haiku-5-5', max_tokens: 256 }),
       expect.any(Object),
@@ -77,23 +84,30 @@ describe('moderateText', () => {
 
   it('extracts the Anthropic key from a JSON Secrets Manager environment value', async () => {
     process.env.ANTHROPIC_API_KEY = JSON.stringify({ api_key: 'json-test-key' });
-    axios.post.mockRejectedValueOnce(new Error('OpenAI unavailable'))
+    axios.post
+      .mockRejectedValueOnce(new Error('OpenAI unavailable'))
       .mockResolvedValueOnce({ data: { input_tokens: 12 } })
-      .mockResolvedValueOnce({ data: { content: [{ type: 'text', text: '{"results":[{"flagged":false}]}' }] } });
+      .mockResolvedValueOnce({
+        data: { content: [{ type: 'text', text: '{"results":[{"flagged":false}]}' }] },
+      });
     const next = jest.fn();
 
     await moderateText({ body: { text: 'safe request' } }, {}, next);
 
-    expect(axios.post).toHaveBeenNthCalledWith(2,
+    expect(axios.post).toHaveBeenNthCalledWith(
+      2,
       'https://api.anthropic.com/v1/messages/count_tokens',
       expect.any(Object),
-      expect.objectContaining({ headers: expect.objectContaining({ 'x-api-key': 'json-test-key' }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-api-key': 'json-test-key' }),
+      }),
     );
     expect(next).toHaveBeenCalledTimes(1);
   });
 
   it('uses Bedrock after Claude token counting fails and preserves fail closed behavior', async () => {
-    axios.post.mockRejectedValueOnce(new Error('OpenAI unavailable'))
+    axios.post
+      .mockRejectedValueOnce(new Error('OpenAI unavailable'))
       .mockRejectedValueOnce(new Error('Claude unavailable'));
     mockBedrockSend.mockResolvedValueOnce({
       output: { message: { content: [{ text: '{"results":[{"flagged":true}]}' }] } },
@@ -110,7 +124,8 @@ describe('moderateText', () => {
   });
 
   it('skips paid Claude moderation when token counting exceeds the budget', async () => {
-    axios.post.mockRejectedValueOnce(new Error('OpenAI unavailable'))
+    axios.post
+      .mockRejectedValueOnce(new Error('OpenAI unavailable'))
       .mockResolvedValueOnce({ data: { input_tokens: 100_001 } });
     mockBedrockSend.mockResolvedValueOnce({
       output: { message: { content: [{ text: '{"results":[{"flagged":false}]}' }] } },
