@@ -1021,6 +1021,26 @@ MCP_FUNCTION_METADATA["get_company_lifecycle_document_gaps"] = {
         "chat_proxy": "Preview the required and missing lifecycle documents for a Vienna company; nothing is sent or written."
     },
 }
+MCP_FUNCTION_METADATA["prepare_diligence_room"] = {
+    "appIds": ["3", "4", "5"],
+    "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+    "requiresCaseId": False,
+    "mutatesState": False,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "Prepare a read-only diligence-room status from either the trusted company's lifecycle requirements "
+        "or an authorized deal's open requests. Supply a deal_id for deal scope; otherwise use the trusted "
+        "case_id and app_id. This operation creates no requests and sends nothing."
+    ),
+    "callerDescriptionsBySurface": {
+        "chat_proxy": (
+            "Preview company lifecycle document gaps or the open diligence requests for an authorized deal."
+        )
+    },
+}
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "edit_company_action_items": (
@@ -1245,6 +1265,23 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "invocationGuidance": (
                 "Preview the required and missing lifecycle documents for the trusted SeriesAI company. "
                 "This operation is read-only and does not send a request or create an action item."
+            ),
+        },
+    ),
+    "prepare_diligence_room": (
+        {
+            "name": "diligence_room_prepare",
+            "operationId": "diligence-room-prepare",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+            "argumentBindings": {"dealId": "deal_id", "lifecycleStage": "lifecycle_stage"},
+            "invocationGuidance": (
+                "Preserve the requested company or deal scope. For company scope use the trusted case and app "
+                "IDs; for deal scope pass the requested deal ID and let Django enforce deal membership. This "
+                "preview is read-only and does not create requests or send messages."
             ),
         },
     ),

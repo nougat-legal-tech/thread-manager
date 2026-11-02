@@ -1511,6 +1511,32 @@ async def get_company_lifecycle_document_gaps(
     return await _post(ctx, "/api/tools/execute/", payload)
 
 
+@mcp.tool(
+    description=(
+        "Preview lifecycle document gaps for a company or open diligence requests for an authorized deal. "
+        "Use case_id and app_id for company scope, or deal_id for deal scope. This operation is read-only."
+    )
+)
+async def prepare_diligence_room(
+    ctx: Context,
+    case_id: str | None = None,
+    app_id: str | None = None,
+    deal_id: str | None = None,
+    lifecycle_stage: str | None = None,
+) -> dict:
+    payload: dict[str, object] = {"toolName": "prepareDiligenceRoom"}
+    if case_id is not None:
+        payload["caseId"] = case_id
+        payload["organizationId"] = case_id
+    if app_id is not None:
+        payload["appId"] = app_id
+    if deal_id is not None:
+        payload["dealId"] = deal_id
+    if lifecycle_stage is not None:
+        payload["lifecycleStage"] = lifecycle_stage
+    return await _post(ctx, "/api/tools/execute/", payload)
+
+
 @mcp.tool(description="Read the company cap table with legacy-compatible ownership entries and summaries.")
 async def get_seriesai_company_cap_table(
     ctx: Context,
