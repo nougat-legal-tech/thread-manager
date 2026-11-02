@@ -41,6 +41,18 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert whatsapp["requiresExplicitConfirmation"] is True
 
     company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
+    for name in (
+        "get_seriesai_cap_table_state",
+        "list_seriesai_document_templates",
+        "list_seriesai_email_messages",
+    ):
+        read_tool = next(record for record in company_operations["functions"] if record["name"] == name)
+        assert read_tool["mutatesState"] is False
+        assert read_tool["sendsExternalMessage"] is False
+        assert read_tool["sendsUserEmail"] is False
+        assert read_tool["startsAsyncWorkflow"] is False
+        assert read_tool["returnsInlineResult"] is True
+
     company_details = next(
         record for record in company_operations["functions"] if record["name"] == "get_seriesai_company_details"
     )

@@ -1,3 +1,4 @@
+# Vendored from django-hub/jurist_backend/core/services/callable_function_registry.py
 """Canonical callable-function metadata consumed by existing Django surfaces.
 
 MCP wrappers and external callers are being migrated to this registry in stages.
@@ -908,6 +909,64 @@ MCP_FUNCTION_METADATA: dict[str, dict[str, Any]] = {
     )
 }
 
+_SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES = (
+    "get_seriesai_cap_table_state",
+    "list_seriesai_cap_table_transactions",
+    "list_seriesai_cap_table_scenarios",
+    "list_seriesai_issuance_workflows",
+    "get_seriesai_revenue_metrics",
+    "get_seriesai_recent_sales",
+    "get_seriesai_marketing_performance",
+    "get_seriesai_web_analytics",
+    "get_seriesai_connector_status",
+    "list_seriesai_upcoming_campaigns",
+    "list_seriesai_marketing_automations",
+    "list_seriesai_document_templates",
+    "list_seriesai_document_amendments",
+    "list_seriesai_document_runs",
+    "get_seriesai_document_run",
+    "list_seriesai_billing_invoices",
+    "get_seriesai_billing_invoice",
+    "list_seriesai_audit_events",
+    "get_seriesai_sales_metrics",
+    "get_seriesai_marketing_metrics",
+    "get_seriesai_analytics_metrics",
+    "list_seriesai_stock_plans",
+    "list_seriesai_pending_actions",
+    "list_seriesai_email_messages",
+    "get_seriesai_email_thread",
+    "list_seriesai_email_attachments",
+    "list_seriesai_outbound_emails",
+    "list_seriesai_signer_suggestions",
+)
+for _function_name in _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES:
+    MCP_FUNCTION_METADATA.setdefault(_function_name, {}).update(
+        {
+            "mutatesState": False,
+            "sendsExternalMessage": False,
+            "sendsUserEmail": False,
+            "startsAsyncWorkflow": False,
+            "returnsInlineResult": True,
+        }
+    )
+
+MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
+    "appIds": ["3", "4"],
+    "trustedScopeBindings": {"caseId": "caseId", "appId": "appId"},
+    "requiresCaseId": True,
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "requiresExplicitConfirmation": True,
+    "invocationGuidance": (
+        "This updates the company's lifecycle stage and appends a timeline event. On Slack, first call with "
+        "dryRun=true and show the preview. Only set approved=true after the user explicitly approves that "
+        "proposed stage. The tool binds caseId and appId from the authenticated company context."
+    ),
+}
+
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "get_signature_request_detail": (
         {
@@ -1594,8 +1653,10 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
     {
         "functionId": "advance_lifecycle_stage",
         "name": "advance_lifecycle_stage",
+        "operationIds": ["advance-lifecycle-stage"],
         "categoryId": "company_operations",
         "description": "Advance a company's lifecycle stage and record the corresponding event.",
+        "surfaces": ["intent_handler", "chat_proxy"],
     },
     {
         "functionId": "classify_lifecycle_upload",

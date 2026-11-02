@@ -1398,6 +1398,35 @@ async def get_seriesai_company_details(
     )
 
 
+@mcp.tool(
+    description=(
+        "Advance an authorized SeriesAI company's lifecycle stage. On Slack, preview first; "
+        "only set approved=true after the user explicitly approves the proposed stage."
+    ),
+)
+async def advance_lifecycle_stage(
+    ctx: Context,
+    caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    appId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    lifecycleStage: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    dryRun: bool = False,  # noqa: N803 - preserve the IntentHandler preview contract.
+    approved: bool = False,
+) -> dict:
+    """Advance a scoped company's lifecycle stage and add its timeline event."""
+    return await _post(
+        ctx,
+        "/api/tools/execute/",
+        {
+            "toolName": "advanceLifecycleStage",
+            "organizationId": caseId,
+            "appId": appId,
+            "lifecycleStage": lifecycleStage,
+            "dryRun": dryRun,
+            "approved": approved,
+        },
+    )
+
+
 @mcp.tool(description="Read the company cap table with legacy-compatible ownership entries and summaries.")
 async def get_seriesai_company_cap_table(
     ctx: Context,
