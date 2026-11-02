@@ -1004,6 +1004,23 @@ MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
         "proposed stage. The tool binds caseId and appId from the authenticated company context."
     ),
 }
+MCP_FUNCTION_METADATA["get_company_lifecycle_document_gaps"] = {
+    "appIds": ["3", "4"],
+    "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+    "requiresCaseId": True,
+    "mutatesState": False,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "Preview the required and missing lifecycle documents for the trusted SeriesAI company. "
+        "This operation is read-only and does not send a request or create an action item."
+    ),
+    "callerDescriptionsBySurface": {
+        "chat_proxy": "Preview the required and missing lifecycle documents for a Vienna company; nothing is sent or written."
+    },
+}
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "edit_company_action_items": (
@@ -1212,6 +1229,22 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "invocationGuidance": (
                 "Use this legacy caller name only for a SeriesAI company deadline. "
                 "Preserve the requested add/create, update, or delete operation and use the exact trusted company case scope."
+            ),
+        },
+    ),
+    "get_company_lifecycle_document_gaps": (
+        {
+            "name": "request_missing_lifecycle_documents",
+            "operationId": "request-missing-lifecycle-documents",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "requiresCaseId": True,
+            "argumentBindings": {"lifecycleStage": "lifecycle_stage"},
+            "invocationGuidance": (
+                "Preview the required and missing lifecycle documents for the trusted SeriesAI company. "
+                "This operation is read-only and does not send a request or create an action item."
             ),
         },
     ),
