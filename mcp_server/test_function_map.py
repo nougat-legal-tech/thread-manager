@@ -203,7 +203,6 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
         },
         "signatures_approvals": {
             "request_signature",
-            "retrieve_signature_status",
             "safe_review_approval",
             "signature_approval",
         },
