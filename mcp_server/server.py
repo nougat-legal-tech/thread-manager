@@ -389,10 +389,10 @@ async def list_action_items(
         "/api/action-items/",
         {
             "caseId": case_id,
+            "appId": app_id,
             "itemId": item_id,
             "status": status,
             "assignedTo": assignee_id,
-            "appId": app_id,
             "openOnly": open_only,
             "search": search,
             "includeArchived": include_archived,
@@ -502,6 +502,68 @@ async def edit_case_action_items(
         _set_payload_value(payload, key, value)
     _set_payload_value(payload, "appId", app_id)
     return await _post(ctx, "/api/edit-case-action-items/", payload)
+
+
+@mcp.tool(
+    description=(
+        "Create, assign, update, complete, or delete a SeriesAI company task. Use the app_id and case_id from the "
+        "current company task context. Vienna may assign a task to herself as vienna@nougat.law when she decides "
+        "she can do the work with the available tools; continue execution after self-assignment. On completion, "
+        "include assistant_excerpt with verified results. If blocked, leave the task incomplete, record the blocker "
+        "and next human action in assistant_excerpt, and assign it to the delegator."
+    )
+)
+async def edit_company_action_items(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    operation: str,
+    action_item_id: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    assigned_to: list[str] | None = None,
+    assignee_email: str | None = None,
+    status: str | None = None,
+    completed: bool | None = None,
+    due_date: str | None = None,
+    priority: str | None = None,
+    assistant_excerpt: str | None = None,
+    assistant_run_id: str | None = None,
+    actual_minutes: int | None = None,
+    estimated_minutes: int | None = None,
+    completion_reason: str | None = None,
+    reviewer: str | None = None,
+    parent_task_id: str | None = None,
+    action_items: list[dict[str, object]] | None = None,
+) -> dict:
+    payload: dict[str, object] = {
+        "toolName": "editCompanyActionItems",
+        "appId": app_id,
+        "organizationId": case_id,
+        "operation": operation,
+    }
+    optional_fields = (
+        ("actionItemId", action_item_id),
+        ("title", title),
+        ("description", description),
+        ("assignedTo", assigned_to),
+        ("assigneeEmail", assignee_email),
+        ("status", status),
+        ("completed", completed),
+        ("dueDate", due_date),
+        ("priority", priority),
+        ("assistantExcerpt", assistant_excerpt),
+        ("assistantRunId", assistant_run_id),
+        ("actualMinutes", actual_minutes),
+        ("estimatedMinutes", estimated_minutes),
+        ("completionReason", completion_reason),
+        ("reviewer", reviewer),
+        ("parentTaskId", parent_task_id),
+        ("actionItems", action_items),
+    )
+    for key, value in optional_fields:
+        _set_payload_value(payload, key, value)
+    return await _post(ctx, "/api/tools/execute/", payload)
 
 
 @mcp.tool(
@@ -2824,7 +2886,8 @@ async def convert_communication_to_new_case(
 @mcp.tool(
     description=(
         "Update an existing action item. Use assistant_excerpt to leave the user a concise summary of verified "
-        "work or, when blocked, the blocker and next human action."
+        "work or, when blocked, the blocker and next human action. For a SeriesAI company task (appId 3 or 4), "
+        "also pass its case_id and app_id so the company record and task workspace stay synchronized."
     )
 )
 async def update_action_item(
@@ -2836,7 +2899,24 @@ async def update_action_item(
     status: str | None = None,
     priority: str | None = None,
     assistant_excerpt: str | None = None,
+    case_id: str | None = None,
+    app_id: str | None = None,
 ) -> dict:
+    if str(app_id or "").strip() in {"3", "4"} and case_id:
+        payload = {
+            "toolName": "editCompanyActionItems",
+            "appId": str(app_id),
+            "organizationId": case_id,
+            "operation": "update",
+            "actionItemId": item_id,
+            "title": title,
+            "description": description,
+            "dueDate": due_date,
+            "status": status,
+            "priority": priority,
+            "assistantExcerpt": assistant_excerpt,
+        }
+        return await _post(ctx, "/api/tools/execute/", {k: v for k, v in payload.items() if v is not None})
     body: dict[str, object] = {}
     _set_payload_value(body, "title", title)
     _set_payload_value(body, "description", description)
@@ -2851,10 +2931,30 @@ async def update_action_item(
     description=(
         "Assign or reassign an action item to a user. Provide the user's ID or email in assignee_id. "
         "Vienna may use vienna@nougat.law when she decides she can execute the task, and should continue "
-        "the current task workflow after assigning it."
+        "the current task workflow after assigning it. For a SeriesAI company task (appId 3 or 4), also pass "
+        "its case_id and app_id so the company record and task workspace stay synchronized."
     )
 )
-async def assign_action_item(ctx: Context, item_id: str, assignee_id: str) -> dict:
+async def assign_action_item(
+    ctx: Context,
+    item_id: str,
+    assignee_id: str,
+    case_id: str | None = None,
+    app_id: str | None = None,
+) -> dict:
+    if str(app_id or "").strip() in {"3", "4"} and case_id:
+        return await _post(
+            ctx,
+            "/api/tools/execute/",
+            {
+                "toolName": "editCompanyActionItems",
+                "appId": str(app_id),
+                "organizationId": case_id,
+                "operation": "update",
+                "actionItemId": item_id,
+                "assignedTo": [assignee_id],
+            },
+        )
     return await _post(ctx, f"/api/action-items/{item_id}/assign/", {"assignedTo": [assignee_id]})
 
 
@@ -2933,8 +3033,32 @@ async def create_seriesai_stock_plan(
     )
 
 
-@mcp.tool(description="Mark an action item as complete.")
-async def complete_action_item(ctx: Context, item_id: str) -> dict:
+@mcp.tool(
+    description=(
+        "Mark an action item as complete. For a SeriesAI company task (appId 3 or 4), also pass its case_id "
+        "and app_id so the company record and task workspace stay synchronized."
+    ),
+)
+async def complete_action_item(
+    ctx: Context,
+    item_id: str,
+    case_id: str | None = None,
+    app_id: str | None = None,
+) -> dict:
+    if str(app_id or "").strip() in {"3", "4"} and case_id:
+        return await _post(
+            ctx,
+            "/api/tools/execute/",
+            {
+                "toolName": "editCompanyActionItems",
+                "appId": str(app_id),
+                "organizationId": case_id,
+                "operation": "update",
+                "actionItemId": item_id,
+                "completed": True,
+                "status": "completed",
+            },
+        )
     return await _post(ctx, f"/api/action-items/{item_id}/complete/", {})
 
 

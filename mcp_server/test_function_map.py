@@ -41,6 +41,20 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert whatsapp["requiresExplicitConfirmation"] is True
 
     company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
+    company_task_tool = next(
+        tool for tool in registered_tools if tool.name == "edit_company_action_items"
+    )
+    assert {"case_id", "app_id", "operation"}.issubset(
+        set(company_task_tool.parameters.get("required", [])),
+    )
+    company_task_record = next(
+        record for record in company_operations["functions"] if record["name"] == "edit_company_action_items"
+    )
+    assert company_task_record["appIds"] == ["3", "4"]
+    assert company_task_record["requiresCaseId"] is True
+    assert "mcp" in company_task_record["surfaces"]
+    assert "user-authorized triage" in company_task_record["invocationGuidance"]
+    assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
     for name in (
         "get_seriesai_cap_table_state",
         "list_seriesai_document_templates",

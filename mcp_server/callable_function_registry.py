@@ -729,10 +729,15 @@ _CHAT_PROXY_ONLY_FUNCTION_RECORDS = [
         "operationIds": ["edit-company-action-items", "seriesai-company-action-items"],
         "description": "Explicitly add, assign, update, complete, cancel, or delete Vienna company action items.",
         "requiredInputs": ["caseId", "operation"],
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
         "mutatesState": True,
         "invocationGuidance": (
-            "Use only for an explicit company-task change. For read-only requests, use "
-            "the company action-item retrieval operation. Preserve app and company scope."
+            "Use for explicit company-task changes or user-authorized triage of open tasks in the current company. "
+            "Read the task first; Vienna may assign it to herself only when available tools can safely complete it, "
+            "then continue execution in the same turn. Do not claim work requiring an unapproved consequential "
+            "action or unresolved human judgment. Record verified results on completion, or the blocker and next "
+            "human action when handing the task back. Preserve app and company scope."
         ),
         "surfaces": ["chat_proxy"],
         "metadataStatus": "chat_proxy_only",
@@ -1001,6 +1006,22 @@ MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
 }
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
+    "edit_company_action_items": (
+        {
+            "name": "edit_company_action_items",
+            "operationId": "edit-company-action-items",
+            "surfaces": ["mcp", "chat_proxy"],
+            "verification": "verified_scoped_seriesai_executor",
+            "appIds": ["3", "4"],
+            "requiresCaseId": True,
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "invocationGuidance": (
+                "Use only for an explicit SeriesAI company-task change with the task's case_id and app_id. "
+                "Vienna may self-assign, then must continue execution; record verified completion or a blocker "
+                "and human next action on the task."
+            ),
+        },
+    ),
     "advance_lifecycle_stage": (
         {
             "name": "advance_lifecycle_stage",
@@ -1173,6 +1194,24 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
                 "Acknowledge only the exact deadlineId in the trusted SeriesAI case and app scope. "
                 "Call first without approved to return a no-write preview; set approved=true only after "
                 "the user explicitly confirms that preview."
+            ),
+        },
+        {
+            "name": "edit_company_deadlines",
+            "operationId": "edit-company-deadlines",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "argumentBindings": {
+                "deadlineId": "deadline_id",
+                "dueDate": "date",
+                "title": "label",
+            },
+            "requiresCaseId": True,
+            "invocationGuidance": (
+                "Use this legacy caller name only for a SeriesAI company deadline. "
+                "Preserve the requested add/create, update, or delete operation and use the exact trusted company case scope."
             ),
         },
     ),
@@ -1709,7 +1748,7 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "functionId": "edit_company_deadlines",
         "name": "edit_company_deadlines",
         "categoryId": "scheduling",
-        "description": "Add, update, or delete a legacy company deadline and its associated timeline event.",
+        "description": "Add, update, or delete a legacy company deadline in the embedded company record.",
     },
     {
         "functionId": "advance_lifecycle_stage",

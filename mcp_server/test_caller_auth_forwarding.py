@@ -89,6 +89,96 @@ def test_assign_action_item_forwards_vienna_identity_with_authenticated_caller(m
     ]
 
 
+def test_assign_company_action_item_uses_scoped_seriesai_writer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
+
+    result = _run_mock_async(
+        server.assign_action_item(
+            ctx,
+            item_id="task-123",
+            assignee_id="vienna@nougat.law",
+            case_id="juristai",
+            app_id="3",
+        ),
+    )
+
+    assert result == {"ok": True}
+    assert calls == [
+        (
+            "POST",
+            "/api/core/tools/execute/",
+            {
+                "content": (
+                    '{"toolName": "editCompanyActionItems", "appId": "3", '
+                    '"organizationId": "juristai", "operation": "update", '
+                    '"actionItemId": "task-123", "assignedTo": ["vienna@nougat.law"]}'
+                ),
+            },
+        ),
+    ]
+
+
+def test_complete_company_action_item_uses_scoped_seriesai_writer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
+
+    result = _run_mock_async(
+        server.complete_action_item(ctx, item_id="task-123", case_id="juristai", app_id="3"),
+    )
+
+    assert result == {"ok": True}
+    assert calls == [
+        (
+            "POST",
+            "/api/core/tools/execute/",
+            {
+                "content": (
+                    '{"toolName": "editCompanyActionItems", "appId": "3", '
+                    '"organizationId": "juristai", "operation": "update", '
+                    '"actionItemId": "task-123", "completed": true, "status": "completed"}'
+                ),
+            },
+        ),
+    ]
+
+
+def test_edit_company_action_items_uses_scoped_seriesai_writer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
+
+    result = _run_mock_async(
+        server.edit_company_action_items(
+            ctx,
+            case_id="juristai",
+            app_id="3",
+            operation="update",
+            action_item_id="task-123",
+            assigned_to=["vienna@nougat.law"],
+            assistant_excerpt="Verified progress.",
+        ),
+    )
+
+    assert result == {"ok": True}
+    assert calls == [
+        (
+            "POST",
+            "/api/core/tools/execute/",
+            {
+                "content": (
+                    '{"toolName": "editCompanyActionItems", "appId": "3", '
+                    '"organizationId": "juristai", "operation": "update", '
+                    '"actionItemId": "task-123", "assignedTo": ["vienna@nougat.law"], '
+                    '"assistantExcerpt": "Verified progress."}'
+                ),
+            },
+        ),
+    ]
+
+
 def test_mcp_create_new_unfiled_matter_forwards_without_case_or_docket_id(monkeypatch):
     calls = []
     monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
