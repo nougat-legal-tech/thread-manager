@@ -1850,7 +1850,15 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "functionId": "diligence_room_query",
         "name": "diligence_room_query",
         "categoryId": "company_operations",
-        "description": "Search the authorized company or deal diligence records.",
+        "description": "Search an authorized company's or deal's diligence records using relevant read tools.",
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "invocationGuidance": (
+            "This is an IntentHandler request routed to ChatProxy, not a standalone MCP executor. Use the "
+            "authenticated function map to select the relevant read tools, preserve any supplied deal scope, "
+            "and use AI to synthesize the matching records. Do not infer missing records from unrelated results."
+        ),
     },
     {
         "functionId": "generate_founder_update",
@@ -1976,9 +1984,9 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
                         "categoryId": record["categoryId"],
                         "appIds": list(record.get("appIds", ["3", "4"])),
                         "surfaces": list(record.get("surfaces", ["intent_handler"])),
-                        "metadataStatus": "legacy_caller_only",
+                        "metadataStatus": record.get("metadataStatus", "legacy_caller_only"),
                         "mcpCallable": False,
-                        "invocationGuidance": (
+                        "invocationGuidance": record.get("invocationGuidance") or (
                             "Migration inventory record only. No MCP schema or canonical executor is registered; "
                             "this record cannot be invoked through the universal MCP endpoint."
                         ),

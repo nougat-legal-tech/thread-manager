@@ -111,6 +111,7 @@ _CATEGORY_BY_ID = {category["id"]: category for category in FUNCTION_CATEGORIES}
 _FUNCTION_CATEGORY_OVERRIDES = {
     # The case prefix is a resource scope; editing important dates is scheduling.
     "edit_case_important_dates": "scheduling",
+    "prepare_diligence_room": "company_operations",
 }
 
 _FUNCTION_GROUPS: tuple[dict[str, Any], ...] = (
@@ -146,7 +147,7 @@ _FUNCTION_GROUPS: tuple[dict[str, Any], ...] = (
         "label": "Analyze and generate",
         "description": "Analyze, summarize, compare, draft, or generate a result.",
         "pattern": re.compile(
-            r"^(analy[sz]e|summari[sz]e|compare|draft|generate|extract|score|recommend|calculate|classify|review|process)_",
+            r"^(analy[sz]e|summari[sz]e|compare|draft|generate|extract|score|recommend|calculate|classify|review|process|prepare)_",
             re.I,
         ),
     },
