@@ -1489,6 +1489,28 @@ async def advance_lifecycle_stage(
     )
 
 
+@mcp.tool(
+    description=(
+        "Preview lifecycle documents required for an authorized SeriesAI company and identify the missing items. "
+        "This is read-only and does not send requests or mark documents as requested."
+    )
+)
+async def get_company_lifecycle_document_gaps(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    lifecycle_stage: str | None = None,
+) -> dict:
+    payload: dict[str, object] = {
+        "toolName": "getCompanyLifecycleDocumentGaps",
+        "organizationId": case_id,
+        "appId": app_id,
+    }
+    if lifecycle_stage is not None:
+        payload["lifecycleStage"] = lifecycle_stage
+    return await _post(ctx, "/api/tools/execute/", payload)
+
+
 @mcp.tool(description="Read the company cap table with legacy-compatible ownership entries and summaries.")
 async def get_seriesai_company_cap_table(
     ctx: Context,

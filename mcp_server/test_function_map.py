@@ -55,12 +55,31 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert "mcp" in company_task_record["surfaces"]
     assert "user-authorized triage" in company_task_record["invocationGuidance"]
     assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
+    lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
+    assert {"caseId", "appId", "lifecycleStage"}.issubset(
+        set(lifecycle_tool.parameters.get("required", [])),
+    )
     for name in (
         "get_seriesai_cap_table_state",
         "list_seriesai_document_templates",
         "list_seriesai_email_messages",
     ):
-        read_tool = next(record for record in company_operations["functions"] if record["name"] == name)
+        read_tool = None
+        for category_entry in index["categories"]:
+            read_tool_map = asyncio.run(
+                server.browse_function_map(
+                    object(),
+                    category_id=category_entry["id"],
+                    tool_names=[name],
+                ),
+            )
+            read_tool = next(
+                (record for record in read_tool_map["functions"] if record["name"] == name),
+                None,
+            )
+            if read_tool is not None:
+                break
+        assert read_tool is not None, f"{name} is missing from the function map"
         assert read_tool["mutatesState"] is False
         assert read_tool["sendsExternalMessage"] is False
         assert read_tool["sendsUserEmail"] is False
@@ -101,7 +120,7 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     deadlines_alias = next(
         alias for alias in important_dates["callerAliases"] if alias["name"] == "retrieve_company_deadlines"
     )
-    assert deadlines_alias["verification"] == "operation_id_match_only"
+    assert deadlines_alias["verification"] == "verified_contract_mapping"
     assert deadlines_alias["appIds"] == ["3", "4"]
     assert deadlines_alias["requiresCaseId"] is True
     assert deadlines_alias["defaultArguments"]["upcoming_only"] is True
@@ -134,7 +153,6 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
         "company_operations": {
             "add_cap_table_entry",
             "update_cap_table_entry",
-            "advance_lifecycle_stage",
             "diligence_room_prepare",
             "diligence_room_query",
             "generate_founder_update",

@@ -234,3 +234,68 @@ def test_mcp_client_forwards_bearer_token_to_django():
     client = server._client("signed-user-token")
 
     assert client.headers["Authorization"] == "Bearer signed-user-token"
+
+
+def test_send_whatsapp_message_requires_confirmation_without_dispatch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda _token: calls.append("client") or _Client([]))
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"authorization": "Bearer signed-user-token"})
+        )
+    )
+
+    result = _run_mock_async(
+        server.send_whatsapp_message(
+            ctx,
+            connection_id="connection-1",
+            case_id="case-1",
+            to="+15551234567",
+            message="Please review the attached draft.",
+        )
+    )
+
+    assert result["status"] == "confirmation_required"
+    assert result["sent"] is False
+    assert result["preview"] == {
+        "connectionId": "connection-1",
+        "caseId": "case-1",
+        "to": "+15551234567",
+        "message": "Please review the attached draft.",
+        "contextMessageId": None,
+        "appId": None,
+    }
+    assert calls == []
+
+
+def test_send_whatsapp_message_dispatches_only_after_confirmation(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda token: calls.append(("client", token)) or _Client(calls))
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"authorization": "Bearer signed-user-token"})
+        )
+    )
+
+    result = _run_mock_async(
+        server.send_whatsapp_message(
+            ctx,
+            connection_id="connection-1",
+            case_id="case-1",
+            to="+15551234567",
+            message="Please review the attached draft.",
+            confirm=True,
+        )
+    )
+
+    assert result == {"ok": True}
+    assert calls == [
+        ("client", "Bearer signed-user-token"),
+        (
+            "POST",
+            "/api/integrations/whatsapp/messages",
+            {
+                "content": '{"connectionId": "connection-1", "caseId": "case-1", "to": "+15551234567", "message": "Please review the attached draft."}',
+            },
+        ),
+    ]
