@@ -4548,11 +4548,15 @@ async def browse_function_map(
                 "inputSchema": tool.parameters,
             }
         )
-    return _browse_function_map(
-        universal_function_records(records, include_chat_run_records=allowed_names is None),
-        category_id,
-        subcategory_id,
-    )
+    visible_records = universal_function_records(records, include_chat_run_records=True)
+    if allowed_names is not None:
+        # Keep orchestration and inventory records navigable without making
+        # non-allowlisted MCP executors visible to this caller.
+        visible_records = [
+            record for record in visible_records
+            if record.get("mcpCallable") is not True or record.get("name") in allowed_names
+        ]
+    return _browse_function_map(visible_records, category_id, subcategory_id)
 
 
 # ===========================================================================

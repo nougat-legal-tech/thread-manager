@@ -311,13 +311,13 @@ _CHAT_RUN_TOOL_GUIDANCE = [
     {
         "name": "list_whatsapp_messages",
         "operationIds": ["whatsapp-messages"],
-        "requiredInputs": ["caseId"],
+        "requiredInputs": [],
         "mutatesState": False,
         "invocationGuidance": (
-            "Read only new WhatsApp Business messages for the explicitly authorized case. "
-            "Resolve the connected WhatsApp account through list_whatsapp_connections "
-            "unless the user explicitly names a connection; never ask for an opaque "
-            "connection ID or read unassociated conversations."
+            "Read recent messages from the authenticated app's connected WhatsApp account without requiring a case. "
+            "If a case is named, use only that authorized case. Account reads include unassociated messages and "
+            "messages from cases assigned to the authenticated user in this app; never expose another case's messages. "
+            "Resolve connections through list_whatsapp_connections; never ask for an opaque connection ID."
         ),
     },
     {

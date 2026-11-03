@@ -293,6 +293,18 @@ def test_lifecycle_stage_capability_uses_company_operations_category():
     assert [category["id"] for category in result["categories"]] == ["company_operations"]
 
 
+def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
+    selected = asyncio.run(
+        server.browse_function_map(object(), "company_operations", ["get_seriesai_company_details"])
+    )
+    rows = {record["name"]: record for record in selected["functions"]}
+
+    assert rows["get_seriesai_company_details"]["mcpCallable"] is True
+    assert rows["diligence_room_query"]["mcpCallable"] is False
+    assert rows["diligence_room_query"]["metadataStatus"] == "chat_proxy_orchestration"
+    assert "advance_lifecycle_stage" not in rows
+
+
 def test_in_house_category_map_preserves_required_idempotency_inputs():
     selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
     records = {record["name"]: record for record in selected["functions"]}
