@@ -1041,6 +1041,25 @@ MCP_FUNCTION_METADATA["prepare_diligence_room"] = {
         )
     },
 }
+MCP_FUNCTION_METADATA["classify_lifecycle_upload"] = {
+    "appIds": ["3", "4"],
+    "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+    "requiresCaseId": True,
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "requiresExplicitConfirmation": True,
+    "invocationGuidance": (
+        "Use AI to classify each supplied lifecycle upload using filename and extracted text. "
+        "Preview first with dry_run=true. Persist timeline events only after explicit user confirmation; "
+        "case_id and app_id are bound to authenticated company scope."
+    ),
+    "callerDescriptionsBySurface": {
+        "chat_proxy": "Preview AI-classified company lifecycle upload events; persist them only after explicit approval."
+    },
+}
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "edit_company_action_items": (

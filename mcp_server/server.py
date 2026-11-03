@@ -3211,6 +3211,31 @@ async def edit_case_important_dates(
     return await _post(ctx, "/api/edit-case-important-dates/", payload)
 
 
+@mcp.tool(description=(
+    "AI-classify SeriesAI company lifecycle uploads from filenames and extracted text. "
+    "First call with dry_run=true to preview the proposed timeline events. Persist only after "
+    "the user explicitly approves; caseId and appId are bound to authenticated company scope."
+))
+async def classify_lifecycle_upload(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    files: list[dict[str, Any] | str],
+    lifecycle_stage: str | None = None,
+    dry_run: bool = True,
+    approved: bool = False,
+) -> dict:
+    payload: dict[str, object] = {
+        "caseId": case_id,
+        "appId": app_id,
+        "files": files,
+        "dryRun": dry_run,
+        "approved": approved,
+    }
+    _set_payload_value(payload, "lifecycleStage", lifecycle_stage)
+    return await _post(ctx, "/api/classify-seriesai-lifecycle-uploads/", payload)
+
+
 @mcp.tool(description="Generate or regenerate a bill for a case and billing period.")
 async def generate_case_bill(ctx: Context, case_id: str, billing_period: str | None = None) -> dict:
     return await _post(ctx, f"/api/core/billing/cases/{case_id}/generate", {"billingPeriod": billing_period})

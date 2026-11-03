@@ -305,6 +305,30 @@ def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
     assert "advance_lifecycle_stage" not in rows
 
 
+def test_lifecycle_classifier_is_in_company_operations_and_requires_approval(monkeypatch):
+    selected = asyncio.run(server.browse_function_map(object(), "company_operations", ["classify_lifecycle_upload"]))
+    record = next(item for item in selected["functions"] if item.get("name") == "classify_lifecycle_upload")
+    assert record["appIds"] == ["3", "4"]
+    assert record["mutatesState"] is True
+    assert record["requiresExplicitConfirmation"] is True
+
+    captured = {}
+
+    async def fake_post(ctx, path, payload):
+        captured.update(ctx=ctx, path=path, payload=payload)
+        return {"status": "preview"}
+
+    monkeypatch.setattr(server, "_post", fake_post)
+    ctx = object()
+    result = asyncio.run(server.classify_lifecycle_upload(
+        ctx, "company-1", "4", [{"name": "board-consent.pdf"}], dry_run=True, approved=False,
+    ))
+    assert result == {"status": "preview"}
+    assert captured["path"] == "/api/classify-seriesai-lifecycle-uploads/"
+    assert captured["payload"]["dryRun"] is True
+    assert captured["payload"]["approved"] is False
+
+
 def test_in_house_category_map_preserves_required_idempotency_inputs():
     selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
     records = {record["name"]: record for record in selected["functions"]}
