@@ -4550,11 +4550,13 @@ async def browse_function_map(
         )
     visible_records = universal_function_records(records, include_chat_run_records=True)
     if allowed_names is not None:
-        # Keep orchestration and inventory records navigable without making
-        # non-allowlisted MCP executors visible to this caller.
+        # A name allowlist narrows callable and inventory records alike. Keep
+        # only the orchestration metadata needed to explain workflows that
+        # are routed through ChatProxy instead of an MCP executor.
         visible_records = [
             record for record in visible_records
-            if record.get("mcpCallable") is not True or record.get("name") in allowed_names
+            if record.get("name") in allowed_names
+            or record.get("metadataStatus") == "chat_proxy_orchestration"
         ]
     return _browse_function_map(visible_records, category_id, subcategory_id)
 
