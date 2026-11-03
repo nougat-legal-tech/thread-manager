@@ -2021,11 +2021,11 @@ async def get_teams_channel_messages(
     return await _get(ctx, path, {"appId": app_id})
 
 
-@mcp.tool(description="Read new WhatsApp Business messages already associated with an authorized connection.")
+@mcp.tool(description="Read recent WhatsApp Business messages from the authenticated app's authorized connection, optionally scoped to an authorized case.")
 async def list_whatsapp_messages(
     ctx: Context,
-    connection_id: str,
-    case_id: str,
+    connection_id: str | None = None,
+    case_id: str | None = None,
     app_id: str | None = None,
     limit: int | None = None,
 ) -> dict:
