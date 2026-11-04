@@ -4865,7 +4865,7 @@
     "/api/core/integrations/slack/history": {
       "get": {
         "operationId": "get-slack-channel-messages",
-        "description": "Recent messages in a single Slack channel, newest first, with sender names resolved. Pass channelId, or channelName with or without the leading '#'. An empty message list means the Vienna bot is not a member of that channel -- say it needs inviting rather than concluding the channel is quiet.",
+        "description": "Recent messages in a single Slack channel, newest first, with sender names resolved. Pass channelId, or channelName with or without the leading '#'. A successful response with an empty message list means no messages matched the requested range; only an explicit status=not_member or not_in_channel indicates the connected Vienna bot needs to be invited. If no tool result is available or the request fails, report that access could not be verified.",
         "summary": "Read recent messages from one Slack channel.",
         "parameters": [
           {

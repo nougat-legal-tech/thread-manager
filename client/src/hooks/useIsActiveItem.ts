@@ -19,10 +19,10 @@ export default function useIsActiveItem<T extends HTMLElement = HTMLElement>(): 
       return;
     }
 
-    const observer = new MutationObserver((mutations) => {
-      if (mutations.some((mutation) => mutation.attributeName === 'data-active-item')) {
-        setIsActive(element.hasAttribute('data-active-item'));
-      }
+    const observer = new MutationObserver(() => {
+      // Re-read the DOM as the source of truth. This also handles DOM implementations
+      // that omit the changed attribute name on removal records.
+      setIsActive(element.hasAttribute('data-active-item'));
     });
 
     // Observe all attributes and filter the records ourselves. Some DOM implementations

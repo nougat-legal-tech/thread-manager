@@ -41,18 +41,13 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert whatsapp["requiresExplicitConfirmation"] is True
 
     company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
-    company_task_tool = next(
-        tool for tool in registered_tools if tool.name == "edit_company_action_items"
-    )
-    assert {"case_id", "app_id", "operation"}.issubset(
-        set(company_task_tool.parameters.get("required", [])),
-    )
+    assert all(tool.name != "edit_company_action_items" for tool in registered_tools)
     company_task_record = next(
         record for record in company_operations["functions"] if record["name"] == "edit_company_action_items"
     )
-    assert company_task_record["appIds"] == ["3", "4"]
-    assert company_task_record["requiresCaseId"] is True
-    assert "mcp" in company_task_record["surfaces"]
+    assert company_task_record["surfaces"] == ["chat_proxy"]
+    assert company_task_record["mcpCallable"] is False
+    assert company_task_record["metadataStatus"] == "chat_proxy_only"
     assert "user-authorized triage" in company_task_record["invocationGuidance"]
     assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
     lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
@@ -172,7 +167,6 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
             "summarize_financing_document",
         },
         "documents_research": {
-            "classify_lifecycle_upload",
             "request_missing_lifecycle_documents",
             "document_amendment_request",
             "document_generation_request",
@@ -246,15 +240,18 @@ def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlist
     selected = asyncio.run(
         server.browse_function_map(object(), "contracts_workflows", ["retrieve_in_house_requests"])
     )
-    record = selected["functions"][0]
+    record = next(item for item in selected["functions"] if item["name"] == "retrieve_in_house_requests")
     assert record["name"] == "retrieve_in_house_requests"
     assert record["appIds"] == ("5",)
     assert {"chat_run", "chat_proxy", "mcp"}.issubset(record["surfaces"])
     assert record["mcpCallable"] is True
 
-    obligations = asyncio.run(
+    obligations_result = asyncio.run(
         server.browse_function_map(object(), "contracts_workflows", ["retrieve_in_house_obligations"])
-    )["functions"][0]
+    )
+    obligations = next(
+        item for item in obligations_result["functions"] if item["name"] == "retrieve_in_house_obligations"
+    )
     assert obligations["name"] == "retrieve_in_house_obligations"
     assert obligations["appIds"] == ("5",)
     case_id_schema = obligations["inputSchema"]["properties"]["case_id"]
@@ -267,9 +264,10 @@ def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlist
         "retrieve_in_house_counterparties",
         "search_in_house_knowledge",
     ):
-        scoped_tool = asyncio.run(
+        scoped_result = asyncio.run(
             server.browse_function_map(object(), "contracts_workflows", [tool_name])
-        )["functions"][0]
+        )
+        scoped_tool = next(item for item in scoped_result["functions"] if item["name"] == tool_name)
         assert scoped_tool["name"] == tool_name
         assert scoped_tool["appIds"] == ("5",)
         assert scoped_tool["mcpCallable"] is True
@@ -305,8 +303,8 @@ def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
     assert "advance_lifecycle_stage" not in rows
 
 
-def test_lifecycle_classifier_is_in_company_operations_and_requires_approval(monkeypatch):
-    selected = asyncio.run(server.browse_function_map(object(), "company_operations", ["classify_lifecycle_upload"]))
+def test_lifecycle_classifier_is_in_documents_research_and_requires_approval(monkeypatch):
+    selected = asyncio.run(server.browse_function_map(object(), "documents_research", ["classify_lifecycle_upload"]))
     record = next(item for item in selected["functions"] if item.get("name") == "classify_lifecycle_upload")
     assert record["appIds"] == ["3", "4"]
     assert record["mutatesState"] is True

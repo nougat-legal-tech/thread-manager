@@ -1576,7 +1576,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "retrieve_slack_channel_messages",
             "operationId": "get-slack-channel-messages",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
     ),
     "precedent_query": (
@@ -1944,6 +1944,20 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "name": "generate_founder_update",
         "categoryId": "company_operations",
         "description": "Generate a founder update grounded in company events and diligence status.",
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": False,
+        "sendsExternalMessage": False,
+        "sendsUserEmail": False,
+        "invocationGuidance": (
+            "Draft an unsent founder update using AI and only authenticated, app-scoped map reads. Browse "
+            "company_operations for get_seriesai_company_details and get_company_lifecycle_document_gaps; "
+            "browse the relevant timeline category for list_case_timeline. Use up to three dated past lifecycle "
+            "events and up to five missing diligence documents. Exclude future events and external calendar data. "
+            "Treat requested support as emphasis, never as evidence. Do not save or send the draft; state when "
+            "company facts or source data are unavailable."
+        ),
     },
     {
         "functionId": "generate_board_consent",
