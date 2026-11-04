@@ -600,6 +600,35 @@ async def join_meeting(
     )
 
 
+@mcp.tool(
+    description=(
+        "Control a Vienna meeting session previously started by you. Use only a sessionId returned by Vienna's "
+        "join_meeting action or the meeting controls. Actions: pause-transcription (mute, muted=true), "
+        "resume-transcription (mute, muted=false), mute-speech (mute-output, muted=true), "
+        "resume-speech (mute-output, muted=false), stop-speech, or leave (stop). Django verifies ownership."
+    ),
+)
+async def control_meeting_session(
+    ctx: Context,
+    session_id: str,
+    action: str,
+) -> dict:
+    """Apply an owner-scoped lifecycle or speech control to a running Vienna meeting."""
+    controls = {
+        "pause-transcription": ("mute", {"muted": True}),
+        "resume-transcription": ("mute", {"muted": False}),
+        "mute-speech": ("mute-output", {"muted": True}),
+        "resume-speech": ("mute-output", {"muted": False}),
+        "stop-speech": ("stop-speech", {}),
+        "leave": ("stop", {}),
+    }
+    selected = controls.get(str(action or "").strip().lower())
+    if not session_id or not selected:
+        return {"error": "invalid_meeting_control", "allowedActions": sorted(controls)}
+    endpoint, body = selected
+    return await _post(ctx, f"/api/core/meeting-sessions/{quote(session_id, safe='')}/{endpoint}/", body)
+
+
 @mcp.tool(description="Fetch docket timeline entries for a case.")
 async def list_case_timeline(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
     return await _get(ctx, "/api/case-timeline/", {"caseId": case_id, "appId": app_id})

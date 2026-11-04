@@ -932,6 +932,23 @@ MCP_FUNCTION_METADATA["join_meeting"] = {
     },
 }
 
+MCP_FUNCTION_METADATA["control_meeting_session"] = {
+    "trustedScopeBindings": {},
+    "requiresCaseId": False,
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "Control only a meeting session returned to this authenticated user by join_meeting or explicitly selected "
+        "in the UI. Prefer stop-speech for an immediate interruption and leave to end participation. The Django "
+        "session endpoint remains authoritative for ownership and valid state transitions."
+    ),
+    "callerDescriptionsBySurface": {
+        "chat_proxy": "Pause, resume, mute, stop speech, or leave Vienna's user-owned meeting session.",
+    },
+}
+
 _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES = (
     "get_seriesai_cap_table_state",
     "list_seriesai_cap_table_transactions",
