@@ -581,23 +581,34 @@ async def join_meeting(
     participation_mode: str = "proactive",
 ) -> dict:
     """Start a user-authorized visible meeting session through Django's normal controls."""
-    preference = await _get(ctx, "/api/core/meeting-sessions/auto-join-preference/")
-    disclosure_version = str(preference.get("disclosureVersion") or "").strip()
-    if not disclosure_version:
-        return {"error": "meeting_disclosure_version_unavailable"}
-    return await _post(
-        ctx,
-        "/api/core/meeting-sessions/",
-        {
-            "meetingUrl": meeting_url,
-            "meetingTitle": meeting_title,
-            "appId": app_id,
-            "caseId": case_id,
-            "participationMode": participation_mode,
-            "consentGiven": True,
-            "disclosureVersion": disclosure_version,
-        },
-    )
+    path = "/api/core/meeting-sessions/"
+    payload = {
+        "meetingUrl": meeting_url,
+        "meetingTitle": meeting_title,
+        "appId": app_id,
+        "caseId": case_id,
+        "participationMode": participation_mode,
+        "consentGiven": True,
+    }
+    try:
+        return await _post(ctx, path, payload)
+    except httpx.HTTPStatusError as exc:
+        # The collection endpoint returns the canonical disclosure version
+        # before creating a session. This keeps explicit joins independent of
+        # the separate calendar auto-join preference endpoint.
+        if exc.response.status_code != 400:
+            raise
+        try:
+            error = exc.response.json()
+        except ValueError:
+            raise
+        if not isinstance(error, dict) or error.get("error") != "disclosure_version_required":
+            raise
+        disclosure_version = str(error.get("disclosureVersion") or "").strip()
+        if not disclosure_version:
+            raise
+    payload["disclosureVersion"] = disclosure_version
+    return await _post(ctx, path, payload)
 
 
 @mcp.tool(

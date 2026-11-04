@@ -88,6 +88,14 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert records["manage_workflow_action"]["requiresExplicitConfirmation"] is True
     assert "explicit user approval" in records["manage_workflow_action"]["invocationGuidance"]
 
+    company_records = asyncio.run(server.browse_function_map(object(), "company_operations"))["functions"]
+    company_by_name = {record["name"]: record for record in company_records}
+    for name in ("generate_safe", "generate_financing_doc", "generate_board_consent"):
+        assert company_by_name[name]["appIds"] == ["3", "4"]
+        assert company_by_name[name]["requiresCaseId"] is True
+        assert company_by_name[name]["trustedScopeBindings"] == {"organizationId": "caseId", "appId": "appId"}
+        assert company_by_name[name]["requiresExplicitConfirmation"] is True
+
     communications = asyncio.run(server.browse_function_map(object(), "communications"))
     whatsapp = next(
         record for record in communications["functions"] if record["name"] == "send_whatsapp_message"

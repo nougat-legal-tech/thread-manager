@@ -120,7 +120,7 @@ _FUNCTION_GROUPS: tuple[dict[str, Any], ...] = (
         "label": "Manage workflows and decisions",
         "description": "Advance, triage, approve, reject, complete, or otherwise resolve an existing workflow.",
         "pattern": re.compile(
-            r"^(decide|approve|reject|transition|triage|complete|fulfill|void|advance|acknowledge|respond|resolve|dismiss|accept|decline|cancel)_",
+            r"^(manage|decide|approve|reject|transition|triage|complete|fulfill|void|advance|acknowledge|respond|resolve|dismiss|accept|decline|cancel)_",
             re.I,
         ),
     },
