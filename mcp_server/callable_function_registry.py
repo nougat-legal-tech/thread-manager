@@ -1058,6 +1058,32 @@ MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
         "proposed stage. The tool binds caseId and appId from the authenticated company context."
     ),
 }
+MCP_FUNCTION_METADATA["create_workflow_run"] = {
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "Create a run only for the authenticated user's requested work and include its real case/company "
+        "resource in scope. Use manage_workflow_action to propose a registered action. The tool intentionally "
+        "omits the one-time event-sink credential from its response."
+    ),
+}
+MCP_FUNCTION_METADATA["manage_workflow_action"] = {
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "requiresExplicitConfirmation": True,
+    "invocationGuidance": (
+        "For operation=propose, use a registered action type and show the returned preview. Proposals always "
+        "require approval. Call operation=approve only after explicit user approval of that exact preview; "
+        "then execute only that approved proposal. Reject or roll back only when requested. Django enforces "
+        "run ownership, resource access, action registration, and proposal state."
+    ),
+}
 MCP_FUNCTION_METADATA["get_company_lifecycle_document_gaps"] = {
     "appIds": ["3", "4"],
     "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
@@ -1964,18 +1990,54 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "name": "generate_board_consent",
         "categoryId": "company_operations",
         "description": "Generate a board-consent document from the appropriate approved template.",
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "invocationGuidance": (
+            "This IntentHandler request is routed through ChatProxy. Use AI to identify the appropriate board "
+            "consent template from the authenticated document-template catalog. Create a scoped workflow run, "
+            "then propose action type seriesai.document.generate through manage_workflow_action with the "
+            "template and supplied facts. Show the returned preview and wait for explicit user approval before "
+            "approving and executing that proposal. Never send a signature request unless separately requested."
+        ),
     },
     {
         "functionId": "generate_safe",
         "name": "generate_safe",
         "categoryId": "company_operations",
         "description": "Generate a SAFE document using the authorized company profile and deal terms.",
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "invocationGuidance": (
+            "This IntentHandler request is routed through ChatProxy. Use AI to identify a supported SAFE "
+            "template from the authenticated document-template catalog, then create a scoped workflow run and "
+            "propose seriesai.document.generate through manage_workflow_action with the supplied deal terms. "
+            "Show the returned preview and wait for explicit user approval before approving and executing that "
+            "proposal. Never send the document or start signatures without a separate request and approval."
+        ),
     },
     {
         "functionId": "generate_financing_doc",
         "name": "generate_financing_doc",
         "categoryId": "company_operations",
         "description": "Generate a financing document from a supported template and supplied deal terms.",
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "invocationGuidance": (
+            "This IntentHandler request is routed through ChatProxy. Use AI to identify a supported financing "
+            "template from the authenticated document-template catalog, then create a scoped workflow run and "
+            "propose seriesai.document.generate through manage_workflow_action with the supplied deal terms. "
+            "Show the returned preview and wait for explicit user approval before approving and executing that "
+            "proposal. Never send the document or start signatures without a separate request and approval."
+        ),
     },
     *(
         {

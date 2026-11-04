@@ -4499,6 +4499,95 @@ async def otter_get_workspace() -> dict:
 
 @mcp.tool(
     description=(
+        "Create an authenticated, scoped durable workflow run before proposing one or more actions. "
+        "Use the returned runId with manage_workflow_action; event-sink credentials are never returned."
+    )
+)
+async def create_workflow_run(
+    ctx: Context,
+    workflow_type: str,
+    scope: dict,
+    input_data: dict | None = None,
+    idempotency_key: str | None = None,
+    external_refs: dict | None = None,
+) -> dict:
+    """Create a durable run under the authenticated caller and resource scope."""
+    if not isinstance(scope, dict) or not any(
+        str(scope.get(key) or "").strip()
+        for key in ("caseId", "matterId", "companyId", "organizationId", "accountId", "scopeId", "resourceId", "tenantId")
+    ):
+        raise ValueError("scope must identify an authorized case, company, account, or resource")
+    result = await _post(
+        ctx,
+        "/api/core/workflows/runs",
+        {
+            key: value
+            for key, value in {
+                "workflowType": workflow_type,
+                "scope": scope,
+                "input": input_data,
+                "idempotencyKey": idempotency_key,
+                "externalRefs": external_refs,
+            }.items()
+            if value is not None
+        },
+    )
+    # This one-time event-sink token is intended for the workflow worker, not
+    # the model or end user. Never expose it through MCP tool output.
+    if isinstance(result, dict):
+        result.pop("eventSink", None)
+    return result
+
+
+@mcp.tool(
+    description=(
+        "Propose, approve, reject, execute, or roll back an action on an authenticated workflow run. "
+        "Proposals default to requiring approval. Show the returned preview and obtain explicit user approval "
+        "before calling operation=approve, then call operation=execute only for that approved proposal."
+    )
+)
+async def manage_workflow_action(
+    ctx: Context,
+    run_id: str,
+    operation: str,
+    action_type: str | None = None,
+    target: dict | None = None,
+    parameters: dict | None = None,
+    proposal_id: str | None = None,
+    risk: str | None = None,
+    evidence_refs: list[dict] | None = None,
+    idempotency_key: str | None = None,
+    note: str | None = None,
+    reason: str | None = None,
+) -> dict:
+    """Use Django's shared durable preview, approval, execution, and rollback service."""
+    allowed_operations = {"propose", "approve", "reject", "execute", "rollback"}
+    normalized_operation = str(operation or "").strip().lower()
+    if normalized_operation not in allowed_operations:
+        raise ValueError("operation must be propose, approve, reject, execute, or rollback")
+    body = {
+        key: value
+        for key, value in {
+            "operation": normalized_operation,
+            "actionType": action_type,
+            "target": target,
+            "parameters": parameters,
+            "proposalId": proposal_id,
+            # MCP callers cannot disable the explicit approval gate.
+            "requiresApproval": True,
+            "risk": risk,
+            "evidenceRefs": evidence_refs,
+            "idempotencyKey": idempotency_key,
+            "note": note,
+            "reason": reason,
+        }.items()
+        if value is not None
+    }
+    return await _post(ctx, f"/api/core/workflows/runs/{quote(str(run_id), safe='')}/actions", body)
+
+
+@mcp.tool(
+    description=(
         "Navigate the universal callable-function catalog in two calls: first omit category_id to get the "
         "category and subgroup table of contents; then pass one returned category_id to get all tool records "
         "in that category, or add a returned subcategory_id to get only that subgroup's records."

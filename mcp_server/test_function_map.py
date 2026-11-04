@@ -33,6 +33,61 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all("inputSchema" in record for record in selected["functions"] if "mcp" in record["surfaces"])
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
+
+def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkeypatch):
+    calls = []
+
+    async def fake_post(ctx, path, body):
+        calls.append((ctx, path, body))
+        return {"runId": "run-1", "eventSink": {"token": "secret"}}
+
+    monkeypatch.setattr(server, "_post", fake_post)
+    ctx = object()
+    created = asyncio.run(
+        server.create_workflow_run(
+            ctx,
+            workflow_type="company.document_generation",
+            scope={"scopeType": "company", "companyId": "company-1", "appId": "4"},
+            input_data={"templateId": "safe"},
+            idempotency_key="run-key-1",
+        )
+    )
+    assert created == {"runId": "run-1"}
+
+    proposed = asyncio.run(
+        server.manage_workflow_action(
+            ctx,
+            run_id="run/1",
+            operation="propose",
+            action_type="seriesai.document.generate",
+            target={"organizationId": "company-1", "appId": "4"},
+            parameters={"templateId": "safe"},
+        )
+    )
+    assert proposed["runId"] == "run-1"
+    assert calls[0][1] == "/api/core/workflows/runs"
+    assert calls[0][2]["scope"]["companyId"] == "company-1"
+    assert calls[1][1] == "/api/core/workflows/runs/run%2F1/actions"
+    assert calls[1][2]["requiresApproval"] is True
+    assert calls[1][2]["operation"] == "propose"
+
+    with pytest.raises(ValueError, match="scope must identify"):
+        asyncio.run(server.create_workflow_run(ctx, "workflow.test", {"appId": "4"}))
+    with pytest.raises(ValueError, match="operation must be"):
+        asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve-all"))
+
+
+def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
+    index = asyncio.run(server.browse_function_map(object()))
+    workflow_category = next(category for category in index["categories"] if category["id"] == "contracts_workflows")
+    selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
+    records = {record["name"]: record for record in selected["functions"]}
+
+    assert workflow_category["count"] > 0
+    assert records["create_workflow_run"]["mcpCallable"] is True
+    assert records["manage_workflow_action"]["requiresExplicitConfirmation"] is True
+    assert "explicit user approval" in records["manage_workflow_action"]["invocationGuidance"]
+
     communications = asyncio.run(server.browse_function_map(object(), "communications"))
     whatsapp = next(
         record for record in communications["functions"] if record["name"] == "send_whatsapp_message"

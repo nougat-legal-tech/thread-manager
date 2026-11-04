@@ -85,7 +85,7 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "contracts_workflows",
-        re.compile(r"contract|obligation|counterparty|in_house|playbook|review_finding|negotiation|engagement", re.I),
+        re.compile(r"contract|obligation|counterparty|in_house|playbook|review_finding|negotiation|engagement|workflow", re.I),
     ),
     (
         "documents_research",
