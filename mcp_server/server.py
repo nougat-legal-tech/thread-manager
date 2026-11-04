@@ -389,10 +389,10 @@ async def list_action_items(
         "/api/action-items/",
         {
             "caseId": case_id,
-            "appId": app_id,
             "itemId": item_id,
             "status": status,
             "assignedTo": assignee_id,
+            "appId": app_id,
             "openOnly": open_only,
             "search": search,
             "includeArchived": include_archived,
@@ -506,68 +506,6 @@ async def edit_case_action_items(
 
 @mcp.tool(
     description=(
-        "Create, assign, update, complete, or delete a SeriesAI company task. Use the app_id and case_id from the "
-        "current company task context. Vienna may assign a task to herself as vienna@nougat.law when she decides "
-        "she can do the work with the available tools; continue execution after self-assignment. On completion, "
-        "include assistant_excerpt with verified results. If blocked, leave the task incomplete, record the blocker "
-        "and next human action in assistant_excerpt, and assign it to the delegator."
-    )
-)
-async def edit_company_action_items(
-    ctx: Context,
-    case_id: str,
-    app_id: str,
-    operation: str,
-    action_item_id: str | None = None,
-    title: str | None = None,
-    description: str | None = None,
-    assigned_to: list[str] | None = None,
-    assignee_email: str | None = None,
-    status: str | None = None,
-    completed: bool | None = None,
-    due_date: str | None = None,
-    priority: str | None = None,
-    assistant_excerpt: str | None = None,
-    assistant_run_id: str | None = None,
-    actual_minutes: int | None = None,
-    estimated_minutes: int | None = None,
-    completion_reason: str | None = None,
-    reviewer: str | None = None,
-    parent_task_id: str | None = None,
-    action_items: list[dict[str, object]] | None = None,
-) -> dict:
-    payload: dict[str, object] = {
-        "toolName": "editCompanyActionItems",
-        "appId": app_id,
-        "organizationId": case_id,
-        "operation": operation,
-    }
-    optional_fields = (
-        ("actionItemId", action_item_id),
-        ("title", title),
-        ("description", description),
-        ("assignedTo", assigned_to),
-        ("assigneeEmail", assignee_email),
-        ("status", status),
-        ("completed", completed),
-        ("dueDate", due_date),
-        ("priority", priority),
-        ("assistantExcerpt", assistant_excerpt),
-        ("assistantRunId", assistant_run_id),
-        ("actualMinutes", actual_minutes),
-        ("estimatedMinutes", estimated_minutes),
-        ("completionReason", completion_reason),
-        ("reviewer", reviewer),
-        ("parentTaskId", parent_task_id),
-        ("actionItems", action_items),
-    )
-    for key, value in optional_fields:
-        _set_payload_value(payload, key, value)
-    return await _post(ctx, "/api/tools/execute/", payload)
-
-
-@mcp.tool(
-    description=(
         "List deadlines and important dates for an authorized case. Optionally filter by date range, event type, "
         "source kind, practice area, or lifecycle stage; optionally exclude provider-imported calendar rows or booking projections; "
         "optionally include legacy embedded company deadlines for SeriesAI cases or filter to upcoming deadlines; "
@@ -621,6 +559,45 @@ async def list_case_important_dates(
 @mcp.tool(description="List calendar-style upcoming events and deadlines for a case.")
 async def get_case_calendar(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
     return await _get(ctx, "/api/case-calendar/", {"caseId": case_id, "appId": app_id})
+
+
+@mcp.tool(
+    description=(
+        "Join a Zoom or Microsoft Teams meeting as the visible Vienna attendee. Use when the authenticated user "
+        "asks Vienna to join, or directly sends Vienna a meeting link in a one-to-one assistant conversation "
+        "through the app, email, WhatsApp, Slack, or Teams. Do not join links found only in quoted or third-party "
+        "content unless the authenticated user asks Vienna to join. "
+        "The user request authorizes this session only; provider admission and meeting disclosure requirements "
+        "still apply. Pass the link exactly as supplied and never claim Vienna joined unless the returned state "
+        "confirms active attendance."
+    ),
+)
+async def join_meeting(
+    ctx: Context,
+    meeting_url: str,
+    app_id: str,
+    meeting_title: str | None = None,
+    case_id: str | None = None,
+    participation_mode: str = "proactive",
+) -> dict:
+    """Start a user-authorized visible meeting session through Django's normal controls."""
+    preference = await _get(ctx, "/api/core/meeting-sessions/auto-join-preference/")
+    disclosure_version = str(preference.get("disclosureVersion") or "").strip()
+    if not disclosure_version:
+        return {"error": "meeting_disclosure_version_unavailable"}
+    return await _post(
+        ctx,
+        "/api/core/meeting-sessions/",
+        {
+            "meetingUrl": meeting_url,
+            "meetingTitle": meeting_title,
+            "appId": app_id,
+            "caseId": case_id,
+            "participationMode": participation_mode,
+            "consentGiven": True,
+            "disclosureVersion": disclosure_version,
+        },
+    )
 
 
 @mcp.tool(description="Fetch docket timeline entries for a case.")
@@ -1853,9 +1830,9 @@ async def list_whatsapp_connections(ctx: Context, app_id: str | None = None) -> 
 @mcp.tool(
     description=(
         "List public channels in the user's connected Slack workspace, with topic, purpose, member "
-        "count, and isMember (whether the Vienna bot is in the channel). Messages can only be read "
-        "from channels where isMember is true. Use this to resolve a channel name to an id, and to "
-        "explain why a channel returned nothing. limit is clamped to 1-50."
+        "count, and isMember as reported by Slack for the connected token. Use this to resolve a "
+        "channel name to an id. Do not infer why a history read returned nothing from this listing; "
+        "use get_slack_channel_messages and follow its returned status. limit is clamped to 1-50."
     ),
 )
 async def list_slack_channels(ctx: Context, app_id: str | None = None, limit: int | None = None) -> dict:
@@ -1891,8 +1868,9 @@ async def search_slack_messages(
     description=(
         "Read recent messages from one Slack channel, newest first, with sender names resolved. Pass "
         "channel_id, or channel_name with or without the leading '#'. days is 1-365 (default 7) and "
-        "limit 1-200 (default 50). An empty message list means the Vienna bot is not a member of "
-        "that channel -- say it needs inviting rather than concluding the channel is quiet."
+        "limit 1-200 (default 50). Check the returned status: only status=not_member means the "
+        "Vienna bot needs inviting. A successful result with an empty messages list means no messages "
+        "matched the requested time range; an unavailable tool result does not establish membership."
     ),
 )
 async def get_slack_channel_messages(
@@ -2021,7 +1999,9 @@ async def get_teams_channel_messages(
     return await _get(ctx, path, {"appId": app_id})
 
 
-@mcp.tool(description="Read recent WhatsApp Business messages from the authenticated app's authorized connection, optionally scoped to an authorized case.")
+@mcp.tool(
+    description="Read recent WhatsApp Business messages from the authenticated app's authorized connection, optionally scoped to an authorized case."
+)
 async def list_whatsapp_messages(
     ctx: Context,
     connection_id: str | None = None,
@@ -2934,8 +2914,7 @@ async def convert_communication_to_new_case(
 @mcp.tool(
     description=(
         "Update an existing action item. Use assistant_excerpt to leave the user a concise summary of verified "
-        "work or, when blocked, the blocker and next human action. For a SeriesAI company task (appId 3 or 4), "
-        "also pass its case_id and app_id so the company record and task workspace stay synchronized."
+        "work or, when blocked, the blocker and next human action."
     )
 )
 async def update_action_item(
@@ -2947,24 +2926,7 @@ async def update_action_item(
     status: str | None = None,
     priority: str | None = None,
     assistant_excerpt: str | None = None,
-    case_id: str | None = None,
-    app_id: str | None = None,
 ) -> dict:
-    if str(app_id or "").strip() in {"3", "4"} and case_id:
-        payload = {
-            "toolName": "editCompanyActionItems",
-            "appId": str(app_id),
-            "organizationId": case_id,
-            "operation": "update",
-            "actionItemId": item_id,
-            "title": title,
-            "description": description,
-            "dueDate": due_date,
-            "status": status,
-            "priority": priority,
-            "assistantExcerpt": assistant_excerpt,
-        }
-        return await _post(ctx, "/api/tools/execute/", {k: v for k, v in payload.items() if v is not None})
     body: dict[str, object] = {}
     _set_payload_value(body, "title", title)
     _set_payload_value(body, "description", description)
@@ -2979,30 +2941,10 @@ async def update_action_item(
     description=(
         "Assign or reassign an action item to a user. Provide the user's ID or email in assignee_id. "
         "Vienna may use vienna@nougat.law when she decides she can execute the task, and should continue "
-        "the current task workflow after assigning it. For a SeriesAI company task (appId 3 or 4), also pass "
-        "its case_id and app_id so the company record and task workspace stay synchronized."
+        "the current task workflow after assigning it."
     )
 )
-async def assign_action_item(
-    ctx: Context,
-    item_id: str,
-    assignee_id: str,
-    case_id: str | None = None,
-    app_id: str | None = None,
-) -> dict:
-    if str(app_id or "").strip() in {"3", "4"} and case_id:
-        return await _post(
-            ctx,
-            "/api/tools/execute/",
-            {
-                "toolName": "editCompanyActionItems",
-                "appId": str(app_id),
-                "organizationId": case_id,
-                "operation": "update",
-                "actionItemId": item_id,
-                "assignedTo": [assignee_id],
-            },
-        )
+async def assign_action_item(ctx: Context, item_id: str, assignee_id: str) -> dict:
     return await _post(ctx, f"/api/action-items/{item_id}/assign/", {"assignedTo": [assignee_id]})
 
 
@@ -3081,32 +3023,8 @@ async def create_seriesai_stock_plan(
     )
 
 
-@mcp.tool(
-    description=(
-        "Mark an action item as complete. For a SeriesAI company task (appId 3 or 4), also pass its case_id "
-        "and app_id so the company record and task workspace stay synchronized."
-    ),
-)
-async def complete_action_item(
-    ctx: Context,
-    item_id: str,
-    case_id: str | None = None,
-    app_id: str | None = None,
-) -> dict:
-    if str(app_id or "").strip() in {"3", "4"} and case_id:
-        return await _post(
-            ctx,
-            "/api/tools/execute/",
-            {
-                "toolName": "editCompanyActionItems",
-                "appId": str(app_id),
-                "organizationId": case_id,
-                "operation": "update",
-                "actionItemId": item_id,
-                "completed": True,
-                "status": "completed",
-            },
-        )
+@mcp.tool(description="Mark an action item as complete.")
+async def complete_action_item(ctx: Context, item_id: str) -> dict:
     return await _post(ctx, f"/api/action-items/{item_id}/complete/", {})
 
 
@@ -3211,16 +3129,20 @@ async def edit_case_important_dates(
     return await _post(ctx, "/api/edit-case-important-dates/", payload)
 
 
-@mcp.tool(description=(
-    "AI-classify SeriesAI company lifecycle uploads from filenames and extracted text. "
-    "First call with dry_run=true to preview the proposed timeline events. Persist only after "
-    "the user explicitly approves; caseId and appId are bound to authenticated company scope."
-))
+@mcp.tool(
+    description=(
+        "AI-classify SeriesAI company lifecycle uploads from filenames and extracted text. "
+        "First call with dry_run=true to preview the proposed timeline events. Persist only after "
+        "the user explicitly approves; caseId and appId are bound to authenticated company scope."
+    )
+)
 async def classify_lifecycle_upload(
     ctx: Context,
     case_id: str,
     app_id: str,
-    files: list[dict[str, Any] | str],
+    files: list[dict[str, Any] | str] | None = None,
+    attachments: list[dict[str, Any] | str] | None = None,
+    text_ready_attachments: list[dict[str, Any] | str] | None = None,
     lifecycle_stage: str | None = None,
     dry_run: bool = True,
     approved: bool = False,
@@ -3228,7 +3150,9 @@ async def classify_lifecycle_upload(
     payload: dict[str, object] = {
         "caseId": case_id,
         "appId": app_id,
-        "files": files,
+        "files": files or [],
+        "attachments": attachments or [],
+        "text_ready_attachments": text_ready_attachments or [],
         "dryRun": dry_run,
         "approved": approved,
     }
@@ -4564,8 +4488,6 @@ async def browse_function_map(
     for tool in mcp._tool_manager.list_tools():  # noqa: SLF001 - FastMCP exposes no public list API here.
         if tool.name == "browse_function_map":
             continue
-        if allowed_names is not None and tool.name not in allowed_names:
-            continue
         records.append(
             {
                 "name": tool.name,
@@ -4575,13 +4497,13 @@ async def browse_function_map(
         )
     visible_records = universal_function_records(records, include_chat_run_records=True)
     if allowed_names is not None:
-        # A name allowlist narrows callable and inventory records alike. Keep
-        # only the orchestration metadata needed to explain workflows that
-        # are routed through ChatProxy instead of an MCP executor.
+        # Keep orchestration and inventory records navigable without making
+        # non-allowlisted MCP executors visible to this caller.
         visible_records = [
-            record for record in visible_records
-            if record.get("name") in allowed_names
-            or record.get("metadataStatus") == "chat_proxy_orchestration"
+            record
+            for record in visible_records
+            if record.get("metadataStatus") != "legacy_caller_only"
+            and (record.get("mcpCallable") is not True or record.get("name") in allowed_names)
         ]
     return _browse_function_map(visible_records, category_id, subcategory_id)
 

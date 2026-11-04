@@ -289,6 +289,83 @@ describe('initializeAgent — execution context', () => {
     jest.clearAllMocks();
   });
 
+  it('tries Claude then Bedrock before configured fallbacks for OpenAI agent model calls', async () => {
+    const { agent, req, res, loadTools, db } = createMocks();
+    const configuredFallback = {
+      provider: Providers.GOOGLE,
+      clientOptions: { model: 'gemini-fallback' },
+    };
+    mockGetProviderConfig.mockReturnValue({
+      overrideProvider: Providers.OPENAI,
+      getOptions: jest.fn().mockResolvedValue({
+        llmConfig: {
+          model: 'test-model',
+          maxTokens: 2048,
+          fallbacks: [configuredFallback],
+        },
+      }),
+    });
+
+    const result = await initializeAgent(
+      {
+        req,
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([agent.provider]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(result.model_parameters?.fallbacks).toEqual([
+      {
+        provider: Providers.ANTHROPIC,
+        clientOptions: { model: 'claude-haiku-5-5', maxTokens: 4096 },
+        maxContextTokens: 100_000,
+      },
+      {
+        provider: Providers.BEDROCK,
+        clientOptions: { model: 'amazon.nova-micro-v1:0', maxTokens: 4096 },
+      },
+      configuredFallback,
+    ]);
+  });
+
+  it('keeps non-OpenAI agent providers on their configured fallback chain', async () => {
+    const { agent, req, res, loadTools, db } = createMocks({ provider: Providers.ANTHROPIC });
+    const configuredFallback = {
+      provider: Providers.GOOGLE,
+      clientOptions: { model: 'gemini-fallback' },
+    };
+    mockGetProviderConfig.mockReturnValue({
+      overrideProvider: Providers.ANTHROPIC,
+      getOptions: jest.fn().mockResolvedValue({
+        llmConfig: {
+          model: 'claude-primary',
+          maxTokens: 2048,
+          fallbacks: [configuredFallback],
+        },
+      }),
+    });
+
+    const result = await initializeAgent(
+      {
+        req,
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([agent.provider]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(result.model_parameters?.fallbacks).toEqual([configuredFallback]);
+  });
+
   it.each(['prefer', 'defer', 'off'] as const)(
     'uses saved repository instruction mode %s in definitions-only initialization',
     async (mode) => {

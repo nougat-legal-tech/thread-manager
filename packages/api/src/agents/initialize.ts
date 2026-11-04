@@ -2265,7 +2265,32 @@ export async function initializeAgent(
     tools = structuredTools.concat(providerTools as GenericTool[]);
   }
 
-  agent.model_parameters = { ...options.llmConfig } as Agent['model_parameters'];
+  const modelParameters = { ...options.llmConfig } as Record<string, unknown>;
+  if (agent.provider === Providers.OPENAI || agent.provider === Providers.AZURE) {
+    const providerFallbacks = [
+      {
+        provider: Providers.ANTHROPIC,
+        clientOptions: { model: 'claude-haiku-5-5', maxTokens: 4096 },
+        maxContextTokens: 100_000,
+      },
+      {
+        provider: Providers.BEDROCK,
+        clientOptions: { model: 'amazon.nova-micro-v1:0', maxTokens: 4096 },
+      },
+    ];
+    const configuredFallbacks = Array.isArray(modelParameters.fallbacks)
+      ? modelParameters.fallbacks.filter((fallback) => {
+          if (fallback == null || typeof fallback !== 'object' || !('provider' in fallback)) {
+            return true;
+          }
+          return (
+            fallback.provider !== Providers.ANTHROPIC && fallback.provider !== Providers.BEDROCK
+          );
+        })
+      : [];
+    modelParameters.fallbacks = [...providerFallbacks, ...configuredFallbacks];
+  }
+  agent.model_parameters = modelParameters as Agent['model_parameters'];
   if (options.configOptions) {
     (agent.model_parameters as Record<string, unknown>).configuration = options.configOptions;
   }

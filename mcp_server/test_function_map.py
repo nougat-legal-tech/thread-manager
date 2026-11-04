@@ -321,12 +321,17 @@ def test_lifecycle_classifier_is_in_company_operations_and_requires_approval(mon
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
     result = asyncio.run(server.classify_lifecycle_upload(
-        ctx, "company-1", "4", [{"name": "board-consent.pdf"}], dry_run=True, approved=False,
+        ctx, "company-1", "4", files=[{"name": "board-consent.pdf"}],
+        attachments=[{"source_attachment": {"name": "signed.pdf"}}],
+        text_ready_attachments=[{"filename": "bylaws.pdf", "text": "signed text"}],
+        dry_run=True, approved=False,
     ))
     assert result == {"status": "preview"}
     assert captured["path"] == "/api/classify-seriesai-lifecycle-uploads/"
     assert captured["payload"]["dryRun"] is True
     assert captured["payload"]["approved"] is False
+    assert captured["payload"]["attachments"] == [{"source_attachment": {"name": "signed.pdf"}}]
+    assert captured["payload"]["text_ready_attachments"] == [{"filename": "bylaws.pdf", "text": "signed text"}]
 
 
 def test_in_house_category_map_preserves_required_idempotency_inputs():
