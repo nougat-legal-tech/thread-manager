@@ -71,6 +71,12 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
     assert calls[1][2]["requiresApproval"] is True
     assert calls[1][2]["operation"] == "propose"
 
+    with pytest.raises(ValueError, match="trusted explicit user approval"):
+        asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve"))
+    asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve", approved=True))
+    assert calls[2][2]["approved"] is True
+    assert calls[2][2]["operation"] == "approve"
+
     with pytest.raises(ValueError, match="scope must identify"):
         asyncio.run(server.create_workflow_run(ctx, "workflow.test", {"appId": "4"}))
     with pytest.raises(ValueError, match="operation must be"):
@@ -86,6 +92,11 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert workflow_category["count"] > 0
     assert records["create_workflow_run"]["mcpCallable"] is True
     assert records["manage_workflow_action"]["requiresExplicitConfirmation"] is True
+    assert records["manage_workflow_action"]["trustedConfirmationActions"] == [
+        "generate_safe",
+        "generate_financing_doc",
+        "generate_board_consent",
+    ]
     assert "explicit user approval" in records["manage_workflow_action"]["invocationGuidance"]
 
     company_records = asyncio.run(server.browse_function_map(object(), "company_operations"))["functions"]
