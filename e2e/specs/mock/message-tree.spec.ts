@@ -1135,7 +1135,8 @@ test.describe('message tree stream operations', () => {
     const errorPrompt = `E2E_FORCED_ERROR:${label}`;
     const providerError = `E2E forced stream error ${label}`;
     const errorText = 'The model provider could not complete this request.';
-    /** No content policy is configured here, so the failure keeps the provider's own words. */
+    const errorHeadline = `${MOCK_ENDPOINTS[0].label} could not complete this request.`;
+    /** No content policy is configured, so the provider's own words remain available in details. */
     const errorPayload = `${errorText}\n${JSON.stringify({
       type: 'upstream_model_error',
       message: providerError,
@@ -1147,8 +1148,9 @@ test.describe('message tree stream operations', () => {
     await sendAndExpectReply(page, basePrompt, baseReply);
     const conversationId = await conversationIdFromPage(page);
 
-    await sendAndExpectReply(page, errorPrompt, errorText);
-    await expect(messagesView(page).getByText(errorText)).toBeVisible({ timeout: 30000 });
+    await sendAndExpectReply(page, errorPrompt, errorHeadline);
+    await expect(messagesView(page).getByText(errorHeadline)).toBeVisible({ timeout: 30000 });
+    await messagesView(page).getByRole('button', { name: 'Provider response' }).click();
     await expect(messagesView(page).getByText(providerError)).toBeVisible();
 
     await sendAndExpectReply(page, afterErrorPrompt, afterErrorReply);
@@ -1164,10 +1166,10 @@ test.describe('message tree stream operations', () => {
     expectParent(messages, afterErrorPrompt, errorPayload, true);
     expectParent(messages, afterErrorReply, afterErrorPrompt, false);
 
-    await reloadAndExpectMessages(page, [baseReply, errorText, afterErrorReply]);
+    await reloadAndExpectMessages(page, [baseReply, errorHeadline, afterErrorReply]);
     await revisitConversationAndExpectMessages(page, conversationId, [
       baseReply,
-      errorText,
+      errorHeadline,
       afterErrorReply,
     ]);
   });
