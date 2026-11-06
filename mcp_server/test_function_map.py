@@ -124,6 +124,7 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
 
 def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     index = asyncio.run(server.browse_function_map(object()))
+    registered_tools = server.mcp._tool_manager.list_tools()
     workflow_category = next(category for category in index["categories"] if category["id"] == "contracts_workflows")
     selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
     records = {record["name"]: record for record in selected["functions"]}
@@ -156,13 +157,14 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert whatsapp["requiresExplicitConfirmation"] is True
 
     company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
-    assert all(tool.name != "edit_company_action_items" for tool in registered_tools)
+    assert any(tool.name == "edit_company_action_items" for tool in registered_tools)
     company_task_record = next(
         record for record in company_operations["functions"] if record["name"] == "edit_company_action_items"
     )
-    assert company_task_record["surfaces"] == ["chat_proxy"]
-    assert company_task_record["mcpCallable"] is False
-    assert company_task_record["metadataStatus"] == "chat_proxy_only"
+    assert {"chat_proxy", "mcp"} <= set(company_task_record["surfaces"])
+    assert company_task_record["mcpCallable"] is True
+    assert company_task_record["metadataStatus"] == "shared_metadata_and_mcp_schema"
+    assert "inputSchema" in company_task_record
     assert "user-authorized triage" in company_task_record["invocationGuidance"]
     assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
     lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
