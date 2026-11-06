@@ -34,6 +34,45 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
 
+def test_cap_table_legacy_mutations_are_callable_map_entries_with_approval_metadata():
+    selected = asyncio.run(server.browse_function_map(object(), "company_operations"))
+    records = {record["name"]: record for record in selected["functions"]}
+
+    for name in ("add_cap_table_entry", "update_cap_table_entry"):
+        record = records[name]
+        assert record["mcpCallable"] is True
+        assert record["mutatesState"] is True
+        assert record["requiresExplicitConfirmation"] is True
+        assert record["appIds"] == ["3", "4"]
+        assert "caseId" in record["inputSchema"].get("properties", {})
+        assert "appId" in record["inputSchema"].get("properties", {})
+        assert "durable workflow run" in record["invocationGuidance"]
+
+
+def test_cap_table_legacy_mutation_wrappers_propose_through_durable_workflow(monkeypatch):
+    calls = []
+
+    async def fake_post(ctx, path, body):
+        calls.append((ctx, path, body))
+        if path == "/api/core/workflows/runs":
+            return {"runId": f"run-{len(calls)}"}
+        return {"proposalId": f"proposal-{len(calls)}", "status": "proposed"}
+
+    monkeypatch.setattr(server, "_post", fake_post)
+    ctx = object()
+    add_result = asyncio.run(server.add_cap_table_entry(ctx, "company-1", "4", {"holderName": "Ada"}))
+    update_result = asyncio.run(server.update_cap_table_entry(ctx, "company-1", "4", "entry-1", {"shares": 100}))
+
+    assert add_result == {"runId": "run-1", "proposalId": "proposal-2", "status": "proposed"}
+    assert update_result == {"runId": "run-3", "proposalId": "proposal-4", "status": "proposed"}
+    assert calls[1][2]["actionType"] == "seriesai.cap_table.legacy_entry.add"
+    assert calls[1][2]["requiresApproval"] is True
+    assert calls[1][2]["parameters"]["capTableEntry"]["holderName"] == "Ada"
+    assert calls[1][2]["parameters"]["capTableEntry"]["capTableEntryId"].startswith("cap_")
+    assert calls[3][2]["actionType"] == "seriesai.cap_table.legacy_entry.update"
+    assert calls[3][2]["parameters"] == {"capTableEntryId": "entry-1", "capTableEntry": {"shares": 100}}
+
+
 def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkeypatch):
     calls = []
 
@@ -96,6 +135,8 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         "generate_safe",
         "generate_financing_doc",
         "generate_board_consent",
+        "add_cap_table_entry",
+        "update_cap_table_entry",
     ]
     assert "explicit user approval" in records["manage_workflow_action"]["invocationGuidance"]
 

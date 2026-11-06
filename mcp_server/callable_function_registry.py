@@ -1061,6 +1061,24 @@ MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
         "proposed stage. The tool binds caseId and appId from the authenticated company context."
     ),
 }
+for _cap_table_entry_function in ("add_cap_table_entry", "update_cap_table_entry"):
+    MCP_FUNCTION_METADATA[_cap_table_entry_function] = {
+        "appIds": ["3", "4"],
+        "trustedScopeBindings": {"caseId": "caseId", "appId": "appId"},
+        "requiresCaseId": True,
+        "mutatesState": True,
+        "sendsExternalMessage": False,
+        "sendsUserEmail": False,
+        "startsAsyncWorkflow": False,
+        "returnsInlineResult": True,
+        "requiresExplicitConfirmation": True,
+        "invocationGuidance": (
+            "These tools create a durable workflow run and propose a change to legacy embedded company cap-table "
+            "entries; they do not create or modify ledger transactions. Show the returned before/after preview and "
+            "proposalId. Only after explicit user approval, call manage_workflow_action with operation=approve and "
+            "then operation=execute for that proposal. Preserve the same run, company, and app scope."
+        ),
+    }
 MCP_FUNCTION_METADATA["create_workflow_run"] = {
     "mutatesState": True,
     "sendsExternalMessage": False,
@@ -1080,7 +1098,13 @@ MCP_FUNCTION_METADATA["manage_workflow_action"] = {
     "startsAsyncWorkflow": False,
     "returnsInlineResult": True,
     "requiresExplicitConfirmation": True,
-    "trustedConfirmationActions": ["generate_safe", "generate_financing_doc", "generate_board_consent"],
+    "trustedConfirmationActions": [
+        "generate_safe",
+        "generate_financing_doc",
+        "generate_board_consent",
+        "add_cap_table_entry",
+        "update_cap_table_entry",
+    ],
     "invocationGuidance": (
         "For operation=propose, use a registered action type and show the returned preview. Proposals always "
         "require approval. Call operation=approve only after explicit user approval of that exact preview; "

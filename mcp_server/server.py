@@ -506,6 +506,68 @@ async def edit_case_action_items(
 
 @mcp.tool(
     description=(
+        "Create, assign, update, complete, cancel, or delete action items for a SeriesAI company. "
+        "Use the authorized company's case_id and app_id (3 or 4). Vienna may assign an actionable task "
+        "to herself and continue execution in the same turn. Record only verified results before completion; "
+        "if blocked, leave it incomplete, record the blocker and next human action, and return it to the delegator."
+    )
+)
+async def edit_company_action_items(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    operation: str,
+    action_item_id: str | None = None,
+    action_items: list[dict[str, Any]] | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+    completed: bool | None = None,
+    assigned_to: list[str] | None = None,
+    assigned_to_emails: list[str] | None = None,
+    assignee_email: str | None = None,
+    reviewer: str | None = None,
+    due_date: str | None = None,
+    priority: str | None = None,
+    estimated_minutes: int | None = None,
+    actual_minutes: int | None = None,
+    assistant_excerpt: str | None = None,
+    completion_reason: str | None = None,
+    apply_to_all: bool | None = None,
+) -> dict[str, Any]:
+    """Call Django's authenticated, company-scoped task writer."""
+    payload: dict[str, Any] = {
+        "toolName": "editCompanyActionItems",
+        "appId": app_id,
+        "organizationId": case_id,
+        "operation": operation,
+    }
+    optional_values = (
+        ("actionItemId", action_item_id),
+        ("actionItems", action_items),
+        ("title", title),
+        ("description", description),
+        ("status", status),
+        ("completed", completed),
+        ("assignedTo", assigned_to),
+        ("assignedToEmails", assigned_to_emails),
+        ("assigneeEmail", assignee_email),
+        ("reviewer", reviewer),
+        ("dueDate", due_date),
+        ("priority", priority),
+        ("estimatedMinutes", estimated_minutes),
+        ("actualMinutes", actual_minutes),
+        ("assistantExcerpt", assistant_excerpt),
+        ("completionReason", completion_reason),
+        ("applyToAll", apply_to_all),
+    )
+    for key, value in optional_values:
+        _set_payload_value(payload, key, value)
+    return await _post(ctx, "/api/core/tools/execute/", payload)
+
+
+@mcp.tool(
+    description=(
         "List deadlines and important dates for an authorized case. Optionally filter by date range, event type, "
         "source kind, practice area, or lifecycle stage; optionally exclude provider-imported calendar rows or booking projections; "
         "optionally include legacy embedded company deadlines for SeriesAI cases or filter to upcoming deadlines; "
@@ -1556,7 +1618,7 @@ async def prepare_diligence_room(
     return await _post(ctx, "/api/tools/execute/", payload)
 
 
-@mcp.tool(description="Read the company cap table with legacy-compatible ownership entries and summaries.")
+@mcp.tool(description="Read committed ownership and separate legacy cap-table entries; legacy entries are not ledger transactions.")
 async def get_seriesai_company_cap_table(
     ctx: Context,
     caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
@@ -1572,6 +1634,71 @@ async def get_seriesai_company_cap_table(
             "appId": appId,
         },
     )
+
+
+@mcp.tool(description="Append a legacy cap table entry to the authenticated company's embedded records. Requires a preview and explicit approval.")
+async def add_cap_table_entry(
+    ctx: Context,
+    caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    appId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    capTableEntry: dict[str, Any],  # noqa: N803 - MCP schema exposes camelCase fields.
+) -> dict:
+    """Create a durable, approval-gated preview for a legacy embedded cap-table entry append."""
+    scope = {"scopeType": "company", "companyId": caseId, "organizationId": caseId, "appId": appId}
+    entry = dict(capTableEntry)
+    entry.setdefault("capTableEntryId", f"cap_{secrets.token_hex(6)}")
+    run = await _post(
+        ctx,
+        "/api/core/workflows/runs",
+        {"workflowType": "seriesai.cap_table.legacy_entry", "scope": scope, "input": {"operation": "add"}},
+    )
+    run_id = str(run.get("runId") or run.get("id") or "").strip()
+    if not run_id:
+        raise ValueError("workflow run was not created")
+    proposal = await _post(
+        ctx,
+        f"/api/core/workflows/runs/{quote(run_id, safe='')}/actions",
+        {
+            "operation": "propose",
+            "actionType": "seriesai.cap_table.legacy_entry.add",
+            "target": scope,
+            "parameters": {"capTableEntry": entry},
+            "requiresApproval": True,
+        },
+    )
+    return {"runId": run_id, **(proposal if isinstance(proposal, dict) else {"proposal": proposal})}
+
+
+@mcp.tool(description="Update a legacy cap table entry by its existing identifier. Requires a preview and explicit approval.")
+async def update_cap_table_entry(
+    ctx: Context,
+    caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    appId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    capTableEntryId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
+    capTableEntry: dict[str, Any] | None = None,  # noqa: N803 - MCP schema exposes camelCase fields.
+) -> dict:
+    """Create a durable, approval-gated preview for a legacy embedded cap-table entry update."""
+    scope = {"scopeType": "company", "companyId": caseId, "organizationId": caseId, "appId": appId}
+    run = await _post(
+        ctx,
+        "/api/core/workflows/runs",
+        {"workflowType": "seriesai.cap_table.legacy_entry", "scope": scope, "input": {"operation": "update"}},
+    )
+    run_id = str(run.get("runId") or run.get("id") or "").strip()
+    if not run_id:
+        raise ValueError("workflow run was not created")
+    proposal = await _post(
+        ctx,
+        f"/api/core/workflows/runs/{quote(run_id, safe='')}/actions",
+        {
+            "operation": "propose",
+            "actionType": "seriesai.cap_table.legacy_entry.update",
+            "target": scope,
+            "parameters": {"capTableEntryId": capTableEntryId, "capTableEntry": capTableEntry or {}},
+            "requiresApproval": True,
+        },
+    )
+    return {"runId": run_id, **(proposal if isinstance(proposal, dict) else {"proposal": proposal})}
 
 
 @mcp.tool(
