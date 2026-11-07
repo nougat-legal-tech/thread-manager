@@ -11,12 +11,18 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { createMethods, agentSchema, actionSchema } = require('@librechat/data-schemas');
-const { openapiToFunction, validateAndParseOpenAPISpec } = require('librechat-data-provider');
+const {
+  Constants,
+  openapiToFunction,
+  validateAndParseOpenAPISpec,
+} = require('librechat-data-provider');
 
 const { ensureJuristaiAgentAction } = require('../../config/ensure-juristai-agent-action');
+const { buildAgentTools } = require('../../config/agent-tools');
 
 const AGENT_ID = 'agent_test_juristai';
 const DOMAIN = 'https://api-dev.juristai.org';
+const MEETING_TOOL_KEY = `join_meeting${Constants.mcp_delimiter}juristai-django`;
 const SPEC_PATH = require('path').resolve(
   __dirname,
   '..',
@@ -37,6 +43,36 @@ const STAGED_SAFE_SPEC_PATH = require('path').resolve(
 const EXPECTED_TOOL_COUNT = Object.values(
   JSON.parse(require('fs').readFileSync(SPEC_PATH, 'utf8')).paths,
 ).reduce((count, methods) => count + Object.keys(methods).length, 0);
+
+test('Vienna meeting MCP tool binding is idempotent and preserves unrelated agent tools', () => {
+  const existingTools = [
+    'execute_code',
+    'search_case_mcp_existing-server',
+    'old_case_tool_action_api_dev_juristai_org',
+  ];
+  const actionTools = ['get_case_action_api_dev_juristai_org'];
+  const options = {
+    existingTools,
+    actionTools,
+    encodedDomain: 'api_dev_juristai_org',
+    legacyDomain: 'api_dev_juristai_org',
+    actionId: 'old-action-id',
+  };
+
+  const firstBinding = buildAgentTools(options);
+  const secondBinding = buildAgentTools({ ...options, existingTools: firstBinding });
+
+  expect(firstBinding).toEqual(
+    expect.arrayContaining([
+      'execute_code',
+      'search_case_mcp_existing-server',
+      ...actionTools,
+      MEETING_TOOL_KEY,
+    ]),
+  );
+  expect(firstBinding).not.toContain('old_case_tool_action_api_dev_juristai_org');
+  expect(secondBinding).toEqual(firstBinding);
+});
 
 test('JuristAI agent action includes the task tools Vienna needs to read, assign, update, and complete tasks', () => {
   const rawSpec = require('fs').readFileSync(SPEC_PATH, 'utf8');
@@ -131,7 +167,8 @@ describe('ensure-juristai-agent-action (infra-as-code guard)', () => {
     expect(result.functionCount).toBe(EXPECTED_TOOL_COUNT);
 
     const agent = await Agent.findOne({ id: AGENT_ID }).lean();
-    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT);
+    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT + 1);
+    expect(agent.tools).toContain(MEETING_TOOL_KEY);
     expect(agent.actions).toHaveLength(1);
     expect(agent.actions[0]).toContain(result.action_id);
 
@@ -150,7 +187,8 @@ describe('ensure-juristai-agent-action (infra-as-code guard)', () => {
     expect(second.reusedExistingAction).toBe(true);
 
     const agent = await Agent.findOne({ id: AGENT_ID }).lean();
-    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT);
+    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT + 1);
+    expect(agent.tools).toContain(MEETING_TOOL_KEY);
     expect(agent.actions).toHaveLength(1);
     expect(await Action.countDocuments({ agent_id: AGENT_ID })).toBe(1);
   });
@@ -186,8 +224,19 @@ describe('ensure-juristai-agent-action (infra-as-code guard)', () => {
     expect(healed.action_id).toBe(first.action_id);
 
     const agent = await Agent.findOne({ id: AGENT_ID }).lean();
-    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT);
+    expect(agent.tools).toHaveLength(EXPECTED_TOOL_COUNT + 1);
+    expect(agent.tools).toContain(MEETING_TOOL_KEY);
     expect(await Action.countDocuments({ agent_id: AGENT_ID })).toBe(1);
+  });
+
+  test('preserves other agent tools while attaching the Vienna meeting action', async () => {
+    const existingTools = ['execute_code', 'search_case_mcp_existing-server'];
+    await Agent.updateOne({ id: AGENT_ID }, { tools: existingTools });
+
+    await ensureJuristaiAgentAction({ dryRun: false, deps: baseDeps() });
+
+    const agent = await Agent.findOne({ id: AGENT_ID }).lean();
+    expect(agent.tools).toEqual(expect.arrayContaining([...existingTools, MEETING_TOOL_KEY]));
   });
 
   test('throws a clear error when the agent does not exist', async () => {

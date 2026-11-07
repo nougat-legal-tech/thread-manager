@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { logger } = require('@librechat/data-schemas');
 const {
+  Constants,
   actionDelimiter,
   openapiToFunction,
   validateAndParseOpenAPISpec,
@@ -9,6 +10,7 @@ const {
 
 require('module-alias')({ base: path.resolve(__dirname, '..', 'api') });
 const connect = require('./connect');
+const { buildAgentTools } = require('./agent-tools');
 
 // `~/models` supplies database methods, but the standalone config process does
 // not run the server bootstrap that registers mongoose models. Register them
@@ -45,6 +47,7 @@ const {
 
 const AGENT_ID = process.env.JURISTAI_AGENT_ID || 'agent_lhpnDhDHKBbh96Ra1s1Qu';
 const ACTION_DOMAIN = process.env.JURISTAI_ACTION_DOMAIN || 'https://api-dev.juristai.org';
+const VIENNA_MEETING_TOOL = `join_meeting${Constants.mcp_delimiter}juristai-django`;
 const SPEC_PATH =
   process.env.JURISTAI_ACTION_SPEC || path.resolve(__dirname, 'juristai-agent-action-spec.json');
 
@@ -114,15 +117,14 @@ async function ensureJuristaiAgentAction({ dryRun = true, deps } = {}) {
   });
   const action_id = domainAction?.action_id || require('nanoid').nanoid();
 
-  const nextTools = (agent.tools || [])
-    .filter(
-      (tool) =>
-        !(
-          tool &&
-          (tool.includes(encodedDomain) || tool.includes(legacyDomain) || tool.includes(action_id))
-        ),
-    )
-    .concat(functions.map((fn) => toolName(fn, encodedDomain)));
+  const nextTools = buildAgentTools({
+    existingTools: agent.tools,
+    actionTools: functions.map((fn) => toolName(fn, encodedDomain)),
+    encodedDomain,
+    legacyDomain,
+    actionId: action_id,
+    meetingToolKey: VIENNA_MEETING_TOOL,
+  });
 
   const actionRef = `${encodedDomain}${actionDelimiter}${action_id}`;
   const nextActions = (agent.actions || [])

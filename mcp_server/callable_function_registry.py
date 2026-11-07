@@ -728,7 +728,7 @@ _CHAT_PROXY_ONLY_FUNCTION_RECORDS = [
         "name": "edit_company_action_items",
         "operationIds": ["edit-company-action-items", "seriesai-company-action-items"],
         "description": "Explicitly add, assign, update, complete, cancel, or delete Vienna company action items.",
-        "requiredInputs": ["caseId", "operation"],
+        "requiredInputs": ["caseId", "appId", "operation"],
         "mutatesState": True,
         "invocationGuidance": (
             "Use for explicit company-task changes or user-authorized triage of open tasks in the current company. "

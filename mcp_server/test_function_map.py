@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).with_name("server.py")
 SPEC = importlib.util.spec_from_file_location("chatbot_mcp_server_function_map_test", MODULE_PATH)
@@ -165,6 +167,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert company_task_record["mcpCallable"] is True
     assert company_task_record["metadataStatus"] == "shared_metadata_and_mcp_schema"
     assert "inputSchema" in company_task_record
+    assert company_task_record["requiredInputs"] == ["caseId", "appId", "operation"]
     assert "user-authorized triage" in company_task_record["invocationGuidance"]
     assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
     lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
@@ -325,13 +328,20 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         assert expected_names <= inventory_records.keys()
         for name in expected_names:
             record = inventory_records[name]
-            assert record["mcpCallable"] is False
             assert "intent_handler" in record["surfaces"]
-            assert "inputSchema" not in record
-            assert "operationIds" not in record
+            if record["mcpCallable"]:
+                assert "mcp" in record["surfaces"]
+                assert "inputSchema" in record
+            else:
+                assert "inputSchema" not in record
+                assert "operationIds" not in record
 
-    subgroup = category["subcategories"][0]
-    selected_subgroup = asyncio.run(server.browse_function_map(object(), category["id"], subcategory_id=subgroup["id"]))
+    subgroup = workflow_category["subcategories"][0]
+    selected_subgroup = asyncio.run(
+        server.browse_function_map(
+            object(), workflow_category["id"], subcategory_id=subgroup["id"]
+        )
+    )
     assert selected_subgroup["subcategory"]["id"] == subgroup["id"]
     assert len(selected_subgroup["functions"]) == subgroup["count"]
     assert all(record["subcategoryId"] == subgroup["id"] for record in selected_subgroup["functions"])
