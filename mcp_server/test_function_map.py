@@ -158,18 +158,13 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert "confirm" in whatsapp["requiredInputs"]
     assert whatsapp["requiresExplicitConfirmation"] is True
 
-    company_operations = asyncio.run(server.browse_function_map(object(), "company_operations"))
-    assert any(tool.name == "edit_company_action_items" for tool in registered_tools)
-    company_task_record = next(
-        record for record in company_operations["functions"] if record["name"] == "edit_company_action_items"
-    )
-    assert {"chat_proxy", "mcp"} <= set(company_task_record["surfaces"])
-    assert company_task_record["mcpCallable"] is True
-    assert company_task_record["metadataStatus"] == "shared_metadata_and_mcp_schema"
-    assert "inputSchema" in company_task_record
-    assert company_task_record["requiredInputs"] == ["caseId", "appId", "operation"]
-    assert "user-authorized triage" in company_task_record["invocationGuidance"]
-    assert "continue execution in the same turn" in company_task_record["invocationGuidance"]
+    case_tools = asyncio.run(server.browse_function_map(object(), "case_management"))
+    registered_names = {tool.name for tool in registered_tools}
+    assert {"edit_case_action_items", "bulk_edit_case_action_items"} <= registered_names
+    assert "edit_company_action_items" not in registered_names
+    case_tool_names = {record["name"] for record in case_tools["functions"]}
+    assert {"edit_case_action_items", "bulk_edit_case_action_items"} <= case_tool_names
+    assert "edit_company_action_items" not in case_tool_names
     lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
     assert {"caseId", "appId", "lifecycleStage"}.issubset(
         set(lifecycle_tool.parameters.get("required", [])),

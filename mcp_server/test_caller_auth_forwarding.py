@@ -127,7 +127,7 @@ def test_assign_action_item_forwards_vienna_identity_with_authenticated_caller(m
     ]
 
 
-def test_edit_company_action_item_uses_scoped_company_task_tool(monkeypatch):
+def test_edit_company_action_item_uses_universal_action_api(monkeypatch):
     tokens = []
     calls = []
     monkeypatch.setattr(server, "_client", lambda token: tokens.append(token) or _Client(calls))
@@ -138,13 +138,13 @@ def test_edit_company_action_item_uses_scoped_company_task_tool(monkeypatch):
     )
 
     result = _run_mock_async(
-        server.edit_company_action_items(
+        server.edit_case_action_items(
             ctx,
             case_id="juristai",
-            app_id="3",
             operation="update",
-            action_item_id="task-123",
+            item_id="task-123",
             assigned_to=["vienna@nougat.law"],
+            app_id="3",
         ),
     )
 
@@ -153,58 +153,28 @@ def test_edit_company_action_item_uses_scoped_company_task_tool(monkeypatch):
     assert calls == [
         (
             "POST",
-            "/api/core/tools/execute/",
+            "/api/edit-case-action-items/",
             {
-                "content": '{"toolName": "editCompanyActionItems", "appId": "3", "organizationId": "juristai", "operation": "update", "actionItemId": "task-123", "assignedTo": ["vienna@nougat.law"]}',
+                "content": '{"caseId": "juristai", "operation": "update", "itemId": "task-123", "assignedTo": ["vienna@nougat.law"], "appId": "3"}',
             },
         ),
     ]
 
 
-def test_complete_company_action_item_uses_scoped_company_task_tool(monkeypatch):
+def test_generic_action_item_api_writes_verified_summary_for_seriesai_case(monkeypatch):
     calls = []
     monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
     ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
 
     result = _run_mock_async(
-        server.edit_company_action_items(
+        server.edit_case_action_items(
             ctx,
             case_id="juristai",
-            app_id="3",
             operation="update",
-            action_item_id="task-123",
-            completed=True,
-            status="completed",
-            assistant_excerpt="Verified completion.",
-        ),
-    )
-
-    assert result == {"ok": True}
-    assert calls == [
-        (
-            "POST",
-            "/api/core/tools/execute/",
-            {
-                "content": '{"toolName": "editCompanyActionItems", "appId": "3", "organizationId": "juristai", "operation": "update", "actionItemId": "task-123", "status": "completed", "completed": true, "assistantExcerpt": "Verified completion."}',
-            },
-        ),
-    ]
-
-
-def test_edit_company_action_item_writes_verified_summary_with_case_scope(monkeypatch):
-    calls = []
-    monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
-    ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
-
-    result = _run_mock_async(
-        server.edit_company_action_items(
-            ctx,
-            case_id="juristai",
-            app_id="3",
-            operation="update",
-            action_item_id="task-123",
+            item_id="task-123",
             assigned_to=["vienna@nougat.law"],
             assistant_excerpt="Verified progress.",
+            app_id="3",
         ),
     )
 
@@ -212,27 +182,27 @@ def test_edit_company_action_item_writes_verified_summary_with_case_scope(monkey
     assert calls == [
         (
             "POST",
-            "/api/core/tools/execute/",
+            "/api/edit-case-action-items/",
             {
-                "content": '{"toolName": "editCompanyActionItems", "appId": "3", "organizationId": "juristai", "operation": "update", "actionItemId": "task-123", "assignedTo": ["vienna@nougat.law"], "assistantExcerpt": "Verified progress."}',
+                "content": '{"caseId": "juristai", "operation": "update", "itemId": "task-123", "assistantExcerpt": "Verified progress.", "assignedTo": ["vienna@nougat.law"], "appId": "3"}',
             },
         ),
     ]
 
 
-def test_edit_company_action_items_can_assign_every_task_to_vienna(monkeypatch):
+def test_generic_bulk_action_api_can_assign_every_seriesai_task(monkeypatch):
     calls = []
     monkeypatch.setattr(server, "_client", lambda _token: _Client(calls))
     ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers={})))
 
     result = _run_mock_async(
-        server.edit_company_action_items(
+        server.bulk_edit_case_action_items(
             ctx,
             case_id="juristai",
-            app_id="3",
-            operation="assign",
-            assigned_to=["vienna@nougat.law"],
+            operation="update",
+            assignee="vienna@nougat.law",
             apply_to_all=True,
+            app_id="3",
         ),
     )
 
@@ -240,9 +210,9 @@ def test_edit_company_action_items_can_assign_every_task_to_vienna(monkeypatch):
     assert calls == [
         (
             "POST",
-            "/api/core/tools/execute/",
+            "/api/action-items/bulk/",
             {
-                "content": '{"toolName": "editCompanyActionItems", "appId": "3", "organizationId": "juristai", "operation": "assign", "assignedTo": ["vienna@nougat.law"], "applyToAll": true}',
+                "content": '{"caseId": "juristai", "operation": "update", "assignee": "vienna@nougat.law", "applyToAll": true, "appId": "3"}',
             },
         ),
     ]

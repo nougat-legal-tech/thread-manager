@@ -423,6 +423,9 @@ async def bulk_edit_case_action_items(
     completed: bool | None = None,
     completion_reason: str | None = None,
     actual_minutes: int | None = None,
+    estimated_minutes: int | None = None,
+    reviewer: str | None = None,
+    assistant_excerpt: str | None = None,
     app_id: str | None = None,
 ) -> dict:
     payload: dict[str, object] = {"caseId": case_id, "operation": operation}
@@ -437,6 +440,9 @@ async def bulk_edit_case_action_items(
         ("completed", completed),
         ("completionReason", completion_reason),
         ("actualMinutes", actual_minutes),
+        ("estimatedMinutes", estimated_minutes),
+        ("reviewer", reviewer),
+        ("assistantExcerpt", assistant_excerpt),
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
@@ -446,8 +452,8 @@ async def bulk_edit_case_action_items(
 
 @mcp.tool(
     description=(
-        "Create, update, or delete one case action item with legacy-style target resolution. Supply app_id when the case ID "
-        "exists in multiple products. On update, use assistant_excerpt to leave a concise verified result or a blocker "
+        "Create, update, or delete case action items with target resolution across practice areas. Supply app_id when the case ID "
+        "exists in multiple products, including SeriesAI apps 3 and 4. On update, use assistant_excerpt to leave a concise verified result or a blocker "
         "and next human action visible on the task. For create or update requests, action_items can batch changes and "
         "assignee or assigned_to can provide a default owner."
     )
@@ -477,6 +483,7 @@ async def edit_case_action_items(
     completion_reason: str | None = None,
     source: str | None = None,
     parent_task_id: str | None = None,
+    reviewer: str | None = None,
     action_items: list[dict[str, Any]] | None = None,
     app_id: str | None = None,
 ) -> dict:
@@ -503,81 +510,12 @@ async def edit_case_action_items(
         ("completionReason", completion_reason),
         ("source", source),
         ("parentTaskId", parent_task_id),
+        ("reviewer", reviewer),
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
     _set_payload_value(payload, "actionItems", action_items)
     _set_payload_value(payload, "appId", app_id)
-    return await _post(ctx, "/api/edit-case-action-items/", payload)
-
-
-@mcp.tool(
-    description=(
-        "Create, assign, update, complete, cancel, or delete action items for a SeriesAI company. "
-        "Use the authorized company's case_id and app_id (3 or 4). Vienna may assign an actionable task "
-        "to herself and continue execution in the same turn. Record only verified results before completion; "
-        "if blocked, leave it incomplete, record the blocker and next human action, and return it to the delegator."
-    )
-)
-async def edit_company_action_items(
-    ctx: Context,
-    case_id: str,
-    app_id: str,
-    operation: str,
-    action_item_id: str | None = None,
-    action_items: list[dict[str, Any]] | None = None,
-    title: str | None = None,
-    description: str | None = None,
-    status: str | None = None,
-    completed: bool | None = None,
-    assigned_to: list[str] | None = None,
-    assigned_to_emails: list[str] | None = None,
-    assignee_email: str | None = None,
-    reviewer: str | None = None,
-    due_date: str | None = None,
-    priority: str | None = None,
-    estimated_minutes: int | None = None,
-    actual_minutes: int | None = None,
-    assistant_excerpt: str | None = None,
-    completion_reason: str | None = None,
-    apply_to_all: bool | None = None,
-) -> dict[str, Any]:
-    """Compatibility alias that delegates writes to the universal action-item APIs."""
-    bulk_update = operation.lower() in {"assign", "assigned", "edit", "edited", "update"} and bool(apply_to_all)
-    payload: dict[str, Any] = {"caseId": case_id, "appId": app_id, "operation": operation}
-    optional_values = (
-        ("itemId", action_item_id),
-        ("actionItems", action_items),
-        ("title", title),
-        ("description", description),
-        ("status", status),
-        ("completed", completed),
-        ("assignedTo", assigned_to),
-        ("assignedToEmails", assigned_to_emails),
-        ("assigneeEmail", assignee_email),
-        ("reviewer", reviewer),
-        ("dueDate", due_date),
-        ("priority", priority),
-        ("estimatedMinutes", estimated_minutes),
-        ("actualMinutes", actual_minutes),
-        ("assistantExcerpt", assistant_excerpt),
-        ("completionReason", completion_reason),
-        ("applyToAll", apply_to_all),
-    )
-    for key, value in optional_values:
-        _set_payload_value(payload, key, value)
-    if due_date is not None:
-        payload["suggestedDueDate"] = payload.pop("dueDate")
-    if bulk_update:
-        payload["operation"] = "update"
-        assigned_to_values = payload.pop("assignedTo", None)
-        if assigned_to_values:
-            if len(assigned_to_values) != 1:
-                raise ValueError("Bulk assignment requires one assignee")
-            payload["assignee"] = assigned_to_values[0]
-        payload.pop("applyToAll", None)
-        return await _post(ctx, "/api/action-items/bulk/", payload)
-    payload.pop("applyToAll", None)
     return await _post(ctx, "/api/edit-case-action-items/", payload)
 
 

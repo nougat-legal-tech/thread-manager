@@ -724,23 +724,6 @@ _CHAT_PROXY_ONLY_FUNCTION_RECORDS = [
         "metadataStatus": "chat_proxy_only",
     },
     {
-        "functionId": "edit_company_action_items",
-        "name": "edit_company_action_items",
-        "operationIds": ["edit-company-action-items", "seriesai-company-action-items"],
-        "description": "Explicitly add, assign, update, complete, cancel, or delete Vienna company action items.",
-        "requiredInputs": ["caseId", "appId", "operation"],
-        "mutatesState": True,
-        "invocationGuidance": (
-            "Use for explicit company-task changes or user-authorized triage of open tasks in the current company. "
-            "Read the task first; Vienna may assign it to herself only when available tools can safely complete it, "
-            "then continue execution in the same turn. Do not claim work requiring an unapproved consequential "
-            "action or unresolved human judgment. Record verified results on completion, or the blocker and next "
-            "human action when handing the task back. Preserve app and company scope."
-        ),
-        "surfaces": ["chat_proxy"],
-        "metadataStatus": "chat_proxy_only",
-    },
-    {
         "functionId": "generate_engagement_letter",
         "name": "generate_engagement_letter",
         "operationIds": ["engagement-letter-signature", "generate_engagement_letter"],
@@ -1173,22 +1156,6 @@ MCP_FUNCTION_METADATA["classify_lifecycle_upload"] = {
 }
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
-    "edit_company_action_items": (
-        {
-            "name": "edit_company_action_items",
-            "operationId": "edit-company-action-items",
-            "surfaces": ["mcp", "chat_proxy"],
-            "verification": "verified_scoped_seriesai_executor",
-            "appIds": ["3", "4"],
-            "requiresCaseId": True,
-            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
-            "invocationGuidance": (
-                "Use only for an explicit SeriesAI company-task change with the task's case_id and app_id. "
-                "Vienna may self-assign, then must continue execution; record verified completion or a blocker "
-                "and human next action on the task."
-            ),
-        },
-    ),
     "advance_lifecycle_stage": (
         {
             "name": "advance_lifecycle_stage",
