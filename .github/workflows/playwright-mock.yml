@@ -215,7 +215,10 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
+        # The monorepo lockfile belongs to the checkout root; don't let npm
+        # infer a nested workspace as its install root.
+        working-directory: ${{ github.workspace }}
+        run: npm ci --package-lock=true
 
       - name: Restore data-provider build cache
         id: cache-data-provider
@@ -430,7 +433,10 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
+        # The monorepo lockfile belongs to the checkout root; don't let npm
+        # infer a nested workspace as its install root.
+        working-directory: ${{ github.workspace }}
+        run: npm ci --package-lock=true
 
       - name: Build e2e dependencies
         run: npm run e2e:prepare

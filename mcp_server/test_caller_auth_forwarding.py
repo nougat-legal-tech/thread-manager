@@ -60,6 +60,44 @@ def test_mcp_case_tool_passes_caller_token_and_case_scope_to_django(monkeypatch)
     ]
 
 
+def test_join_meeting_forwards_caller_token_scope_and_consent_flag(monkeypatch):
+    tokens = []
+    calls = []
+    monkeypatch.setattr(server, "_client", lambda token: tokens.append(token) or _Client(calls))
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"authorization": "Bearer signed-user-token"})
+        )
+    )
+
+    result = _run_mock_async(
+        server.join_meeting(
+            ctx,
+            meeting_url="https://zoom.us/j/123456789",
+            app_id="4",
+            meeting_title="Status meeting",
+            case_id="matter-123",
+        )
+    )
+
+    assert result == {"ok": True}
+    assert tokens == ["Bearer signed-user-token"]
+    assert calls == [
+        (
+            "POST",
+            "/api/core/meeting-sessions/",
+            {
+                "content": (
+                    '{"meetingUrl": "https://zoom.us/j/123456789", '
+                    '"meetingTitle": "Status meeting", "appId": "4", '
+                    '"caseId": "matter-123", "participationMode": "proactive", '
+                    '"consentGiven": true}'
+                ),
+            },
+        ),
+    ]
+
+
 def test_assign_action_item_forwards_vienna_identity_with_authenticated_caller(monkeypatch):
     tokens = []
     calls = []

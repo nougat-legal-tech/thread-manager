@@ -448,7 +448,8 @@ async def bulk_edit_case_action_items(
     description=(
         "Create, update, or delete one case action item with legacy-style target resolution. Supply app_id when the case ID "
         "exists in multiple products. On update, use assistant_excerpt to leave a concise verified result or a blocker "
-        "and next human action visible on the task."
+        "and next human action visible on the task. For create or update requests, action_items can batch changes and "
+        "assignee or assigned_to can provide a default owner."
     )
 )
 async def edit_case_action_items(
@@ -466,6 +467,8 @@ async def edit_case_action_items(
     assignee: str | None = None,
     assignee_email: str | None = None,
     assignee_user_id: str | None = None,
+    assigned_to: list[str] | None = None,
+    assigned_to_emails: list[str] | None = None,
     suggested_due_date: str | None = None,
     date: str | None = None,
     estimated_minutes: int | None = None,
@@ -474,6 +477,7 @@ async def edit_case_action_items(
     completion_reason: str | None = None,
     source: str | None = None,
     parent_task_id: str | None = None,
+    action_items: list[dict[str, Any]] | None = None,
     app_id: str | None = None,
 ) -> dict:
     payload: dict[str, object] = {"caseId": case_id, "operation": operation}
@@ -489,6 +493,8 @@ async def edit_case_action_items(
         ("assignee", assignee),
         ("assigneeEmail", assignee_email),
         ("assigneeUserId", assignee_user_id),
+        ("assignedTo", assigned_to),
+        ("assignedToEmails", assigned_to_emails),
         ("suggestedDueDate", suggested_due_date),
         ("date", date),
         ("estimatedMinutes", estimated_minutes),
@@ -500,6 +506,7 @@ async def edit_case_action_items(
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
+    _set_payload_value(payload, "actionItems", action_items)
     _set_payload_value(payload, "appId", app_id)
     return await _post(ctx, "/api/edit-case-action-items/", payload)
 
