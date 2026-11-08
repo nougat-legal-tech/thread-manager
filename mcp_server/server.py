@@ -542,15 +542,11 @@ async def edit_company_action_items(
     completion_reason: str | None = None,
     apply_to_all: bool | None = None,
 ) -> dict[str, Any]:
-    """Call Django's authenticated, company-scoped task writer."""
-    payload: dict[str, Any] = {
-        "toolName": "editCompanyActionItems",
-        "appId": app_id,
-        "organizationId": case_id,
-        "operation": operation,
-    }
+    """Compatibility alias that delegates writes to the universal action-item APIs."""
+    bulk_update = operation.lower() in {"assign", "assigned", "edit", "edited", "update"} and bool(apply_to_all)
+    payload: dict[str, Any] = {"caseId": case_id, "appId": app_id, "operation": operation}
     optional_values = (
-        ("actionItemId", action_item_id),
+        ("itemId", action_item_id),
         ("actionItems", action_items),
         ("title", title),
         ("description", description),
@@ -570,7 +566,19 @@ async def edit_company_action_items(
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
-    return await _post(ctx, "/api/core/tools/execute/", payload)
+    if due_date is not None:
+        payload["suggestedDueDate"] = payload.pop("dueDate")
+    if bulk_update:
+        payload["operation"] = "update"
+        assigned_to_values = payload.pop("assignedTo", None)
+        if assigned_to_values:
+            if len(assigned_to_values) != 1:
+                raise ValueError("Bulk assignment requires one assignee")
+            payload["assignee"] = assigned_to_values[0]
+        payload.pop("applyToAll", None)
+        return await _post(ctx, "/api/action-items/bulk/", payload)
+    payload.pop("applyToAll", None)
+    return await _post(ctx, "/api/edit-case-action-items/", payload)
 
 
 @mcp.tool(
