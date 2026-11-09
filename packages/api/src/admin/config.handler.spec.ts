@@ -2195,6 +2195,32 @@ describe('createAdminConfigHandlers', () => {
       );
     });
 
+    it('waits for config cache invalidation before confirming a delete', async () => {
+      let finishInvalidation!: () => void;
+      const invalidation = new Promise<void>((resolve) => {
+        finishInvalidation = resolve;
+      });
+      const { handlers } = createHandlers({
+        invalidateConfigCaches: jest.fn(() => invalidation),
+      });
+      const res = mockRes();
+
+      const response = handlers.deleteConfigOverrides(
+        mockReq({ params: { principalType: 'user', principalId: 'u1' } }),
+        res,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(res.json).not.toHaveBeenCalled();
+
+      finishInvalidation();
+      await response;
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ success: true });
+    });
+
     it('broad-manage caller calls destructive op without expectEmpty option', async () => {
       const { handlers, deps } = createHandlers({
         hasConfigCapability: jest.fn().mockResolvedValue(true),

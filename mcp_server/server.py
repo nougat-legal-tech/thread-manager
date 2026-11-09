@@ -132,7 +132,23 @@ def _resolve_path(path: str) -> str:
 async def _get(ctx: Context, path: str, params: dict | None = None) -> dict[str, Any]:
     async with _client(_token(ctx)) as c:
         r = await c.get(_resolve_path(path), params={k: v for k, v in (params or {}).items() if v is not None})
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Django views return a user-safe ``detail`` for expected 4xx
+            # states such as "Connect DocuSign from Connections ...". Without
+            # it Vienna could only say "400 Bad Request" (live 2026-11-05,
+            # Slack 1793874558.879829 DocuSign / WhatsApp lists).
+            if 400 <= r.status_code < 500:
+                try:
+                    body = r.json()
+                except ValueError:
+                    body = None
+                detail = body.get("detail") if isinstance(body, dict) else None
+                if isinstance(detail, str) and detail.strip():
+                    message = f"{exc}. Detail: {detail.strip()[:500]}"
+                    raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
+            raise
         return r.json()
 
 
@@ -408,7 +424,12 @@ def _set_payload_value(payload: dict[str, object], key: str, value: object) -> N
         payload[key] = value
 
 
-@mcp.tool(description="Bulk update or delete matching action items for a case.")
+@mcp.tool(
+    description=(
+        "Bulk update or delete matching action items for a case. Use assignee to select tasks by their current owner; "
+        "use assigned_to to assign the selected tasks to one or more case members."
+    )
+)
 async def bulk_edit_case_action_items(
     ctx: Context,
     case_id: str,
@@ -418,7 +439,9 @@ async def bulk_edit_case_action_items(
     filter_status: str | None = None,
     priority: str | None = None,
     assignee: str | None = None,
+    assigned_to: list[str] | None = None,
     apply_to_all: bool | None = None,
+    dry_run: bool | None = None,
     status: str | None = None,
     completed: bool | None = None,
     completion_reason: str | None = None,
@@ -435,7 +458,9 @@ async def bulk_edit_case_action_items(
         ("filterStatus", filter_status),
         ("priority", priority),
         ("assignee", assignee),
+        ("assignedTo", assigned_to),
         ("applyToAll", apply_to_all),
+        ("dryRun", dry_run),
         ("status", status),
         ("completed", completed),
         ("completionReason", completion_reason),
@@ -455,7 +480,8 @@ async def bulk_edit_case_action_items(
         "Create, update, or delete case action items with target resolution across practice areas. Supply app_id when the case ID "
         "exists in multiple products, including SeriesAI apps 3 and 4. On update, use assistant_excerpt to leave a concise verified result or a blocker "
         "and next human action visible on the task. For create or update requests, action_items can batch changes and "
-        "assignee or assigned_to can provide a default owner."
+        "assignee or assigned_to can provide a default owner. Use apply_to_all only when the user explicitly selects every matching task; "
+        "the same operation then uses the shared bulk endpoint."
     )
 )
 async def edit_case_action_items(
@@ -485,8 +511,59 @@ async def edit_case_action_items(
     parent_task_id: str | None = None,
     reviewer: str | None = None,
     action_items: list[dict[str, Any]] | None = None,
+    apply_to_all: bool | None = None,
+    search_text: str | None = None,
+    current_status: str | None = None,
+    filter_status: str | None = None,
+    dry_run: bool | None = None,
     app_id: str | None = None,
 ) -> dict:
+    if apply_to_all and not isinstance(action_items, list):
+        bulk_operation = str(operation or "").strip().lower()
+        if bulk_operation in {"assign", "assigned", "edit", "edited", "complete", "completed", "done"}:
+            bulk_operation = "update"
+        if bulk_operation not in {"update", "delete", "cancel", "cancelled", "canceled", "close", "closed", "done"}:
+            return {"error": "apply_to_all requires an update or delete operation"}
+        bulk_payload: dict[str, object] = {
+            "caseId": case_id,
+            "operation": bulk_operation,
+            "applyToAll": True,
+        }
+        bulk_status = status
+        bulk_completed = completed
+        if bulk_operation == "update" and str(operation or "").strip().lower() in {"complete", "completed", "done"}:
+            bulk_status = bulk_status or "completed"
+            bulk_completed = True if bulk_completed is None else bulk_completed
+        elif bulk_operation == "update" and str(operation or "").strip().lower() in {"cancel", "cancelled", "canceled"}:
+            bulk_status = bulk_status or "cancelled"
+            bulk_completed = False if bulk_completed is None else bulk_completed
+        bulk_assignees = assigned_to or assigned_to_emails
+        if not bulk_assignees and assignee_email:
+            bulk_assignees = [assignee_email]
+        if not bulk_assignees and assignee_user_id:
+            bulk_assignees = [assignee_user_id]
+        bulk_values = (
+            ("searchText", search_text),
+            ("currentStatus", current_status),
+            ("filterStatus", filter_status),
+            ("status", bulk_status),
+            ("completed", bulk_completed),
+            ("completionReason", completion_reason),
+            ("actualMinutes", actual_minutes),
+            ("estimatedMinutes", estimated_minutes),
+            ("priority", priority),
+            ("assignee", assignee),
+            ("assignedTo", bulk_assignees),
+            ("suggestedDueDate", suggested_due_date or date),
+            ("reviewer", reviewer),
+            ("assistantExcerpt", assistant_excerpt),
+            ("dryRun", dry_run),
+            ("appId", app_id),
+        )
+        for key, value in bulk_values:
+            _set_payload_value(bulk_payload, key, value)
+        return await _post(ctx, "/api/action-items/bulk/", bulk_payload)
+
     payload: dict[str, object] = {"caseId": case_id, "operation": operation}
     optional_values = (
         ("itemId", item_id),
@@ -657,9 +734,130 @@ async def control_meeting_session(
     return await _post(ctx, f"/api/core/meeting-sessions/{quote(session_id, safe='')}/{endpoint}/", body)
 
 
-@mcp.tool(description="Fetch docket timeline entries for a case.")
+@mcp.tool(
+    description=(
+        "Fetch official operational docket timeline entries for a case. Use this only for filed court events "
+        "and docket activity. It is not the AI-generated, source-cited factual chronology; use "
+        "get_case_factual_timeline or search_case_factual_timeline when the user asks about events described "
+        "in case documents."
+    )
+)
 async def list_case_timeline(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
     return await _get(ctx, "/api/case-timeline/", {"caseId": case_id, "appId": app_id})
+
+
+@mcp.tool(
+    description=(
+        "Read the AI-generated, source-cited factual chronology for one case. This is separate from the "
+        "operational docket timeline. Requires case_id and app_id. By default returns accepted events only; "
+        "set include_unreviewed=true only when the user asks to inspect pending or rejected candidates. "
+        "Returns at most the 20 most recent generated runs; if hasMoreRuns is true, use "
+        "search_case_factual_timeline for questions about earlier history. Keep each event's date basis, "
+        "review status, evidence, and linked source context when answering. When the shared MCP agent is enabled, "
+        "use the same tool for Vienna requests from web chat, email, Slack, Microsoft Teams, or WhatsApp. "
+        "Take case_id and app_id from the authorized active case context; do not guess either value."
+    )
+)
+async def get_case_factual_timeline(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    include_unreviewed: bool = False,
+) -> dict:
+    path = f"/api/core/document-processing-runs/chronology/{quote(case_id, safe='')}/"
+    result = await _get(ctx, path, {"appId": app_id})
+    if not isinstance(result, dict):
+        return result
+    if include_unreviewed:
+        return _factual_timeline_payload_for_agent(result)
+    runs = result.get("runs")
+    if not isinstance(runs, list):
+        return _factual_timeline_payload_for_agent(result)
+    accepted_runs = []
+    unreviewed_count = 0
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        assertions = run.get("assertions") if isinstance(run.get("assertions"), list) else []
+        accepted = [item for item in assertions if isinstance(item, dict) and item.get("reviewStatus") == "accepted"]
+        unreviewed_count += len(assertions) - len(accepted)
+        accepted_runs.append({**run, "assertions": accepted})
+    return _factual_timeline_payload_for_agent(
+        {
+            **result,
+            "runs": accepted_runs,
+            "returnedRunCount": len(accepted_runs),
+            "hasMoreRuns": bool(result.get("hasMoreRuns")),
+            "unreviewedEventCountInReturnedRuns": unreviewed_count,
+        }
+    )
+
+
+def _factual_timeline_payload_for_agent(value: object) -> object:
+    """Remove storage and Extend identifiers at every nesting level."""
+    if isinstance(value, dict):
+        internal_keys = {"sourceKey", "textKey", "extendFileId", "extendExtractRunId"}
+        return {
+            key: _factual_timeline_payload_for_agent(item) for key, item in value.items() if key not in internal_keys
+        }
+    if isinstance(value, list):
+        return [_factual_timeline_payload_for_agent(item) for item in value]
+    return value
+
+
+@mcp.tool(
+    description=(
+        "Search event statements, actors, dates, and source perspectives in one case's factual chronology. "
+        "Requires case_id, app_id, and a query of at least two characters. Only accepted events are returned "
+        "by default. Set include_unreviewed=true only when the user asks to inspect candidate history; preserve "
+        "the returned review status and evidence so unreviewed candidates are never stated as established facts. "
+        "When the shared MCP agent is enabled, use this search the same way for Vienna requests from web chat, "
+        "email, Slack, Microsoft Teams, or WhatsApp. Take case_id and app_id from the authorized active case "
+        "context; do not guess either value."
+    )
+)
+async def search_case_factual_timeline(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    query: str,
+    include_unreviewed: bool = False,
+    limit: int | None = None,
+) -> dict:
+    path = f"/api/core/document-processing-runs/chronology/{quote(case_id, safe='')}/search/"
+    result = await _get(
+        ctx,
+        path,
+        {
+            "appId": app_id,
+            "query": query,
+            "includeUnreviewed": include_unreviewed,
+            "limit": limit,
+        },
+    )
+    return _factual_timeline_payload_for_agent(result)
+
+
+@mcp.tool(
+    description=(
+        "Generate a new AI-extracted factual chronology for one case from up to 10 selected processed documents. "
+        "Use only when the user explicitly asks to create or refresh the factual chronology. First call "
+        "get_case_factual_timeline to choose relevant source IDs, then pass those IDs as source_ids. This queues "
+        "reviewable candidates; it does not add docket entries, deadlines, hearings, or legal status. Provider "
+        "privacy policy and Nougat fallback are enforced by Django. When the shared MCP agent is enabled, this "
+        "workflow is available for Vienna requests from web chat, email, Slack, Microsoft Teams, or WhatsApp. "
+        "Take case_id and app_id from the authorized active case context; do not guess either value. Report the "
+        "queued run ID and do not present new events as accepted facts until a reviewer accepts them."
+    )
+)
+async def generate_case_factual_timeline(
+    ctx: Context,
+    case_id: str,
+    app_id: str,
+    source_ids: list[str],
+) -> dict:
+    path = f"/api/core/document-processing-runs/chronology/{quote(case_id, safe='')}/"
+    return await _post(ctx, path, {"appId": app_id, "sourceIds": source_ids})
 
 
 @mcp.tool(description="Fetch the most recent docket entry for a case.")
@@ -1571,7 +1769,9 @@ async def prepare_diligence_room(
     return await _post(ctx, "/api/tools/execute/", payload)
 
 
-@mcp.tool(description="Read committed ownership and separate legacy cap-table entries; legacy entries are not ledger transactions.")
+@mcp.tool(
+    description="Read committed ownership and separate legacy cap-table entries; legacy entries are not ledger transactions."
+)
 async def get_seriesai_company_cap_table(
     ctx: Context,
     caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
@@ -1589,7 +1789,9 @@ async def get_seriesai_company_cap_table(
     )
 
 
-@mcp.tool(description="Append a legacy cap table entry to the authenticated company's embedded records. Requires a preview and explicit approval.")
+@mcp.tool(
+    description="Append a legacy cap table entry to the authenticated company's embedded records. Requires a preview and explicit approval."
+)
 async def add_cap_table_entry(
     ctx: Context,
     caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
@@ -1622,7 +1824,9 @@ async def add_cap_table_entry(
     return {"runId": run_id, **(proposal if isinstance(proposal, dict) else {"proposal": proposal})}
 
 
-@mcp.tool(description="Update a legacy cap table entry by its existing identifier. Requires a preview and explicit approval.")
+@mcp.tool(
+    description="Update a legacy cap table entry by its existing identifier. Requires a preview and explicit approval."
+)
 async def update_cap_table_entry(
     ctx: Context,
     caseId: str,  # noqa: N803 - MCP schema exposes camelCase fields.
@@ -3977,6 +4181,7 @@ async def add_calendar_event(
     end_at: str | None = None,
     description: str | None = None,
     integration_id: str | None = None,
+    location: str | None = None,
 ) -> dict:
     payload: dict[str, object] = {
         "appId": app_id,
@@ -3988,6 +4193,7 @@ async def add_calendar_event(
         ("endAt", end_at),
         ("description", description),
         ("integrationId", integration_id),
+        ("location", location),
     ):
         _set_payload_value(payload, key, value)
     return await _post(ctx, "/api/core/integrations/calendar/events", payload)
@@ -4337,7 +4543,7 @@ async def add_case_step(
     )
     for key, value in optional_values:
         _set_payload_value(payload, key, value)
-    return await _post(ctx, "/api/add-case-step/", payload)
+    return await _post(ctx, "/api/core/add-case-step/", payload)
 
 
 @mcp.tool(description="Trigger (or re-run) AI-driven action-item generation for a case.")
@@ -4607,7 +4813,16 @@ async def create_workflow_run(
     """Create a durable run under the authenticated caller and resource scope."""
     if not isinstance(scope, dict) or not any(
         str(scope.get(key) or "").strip()
-        for key in ("caseId", "matterId", "companyId", "organizationId", "accountId", "scopeId", "resourceId", "tenantId")
+        for key in (
+            "caseId",
+            "matterId",
+            "companyId",
+            "organizationId",
+            "accountId",
+            "scopeId",
+            "resourceId",
+            "tenantId",
+        )
     ):
         raise ValueError("scope must identify an authorized case, company, account, or resource")
     result = await _post(

@@ -1156,6 +1156,41 @@ MCP_FUNCTION_METADATA["classify_lifecycle_upload"] = {
 }
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
+    "edit_case_action_items": (
+        {
+            "name": "edit_company_action_items",
+            "operationId": "edit-company-action-items",
+            "surfaces": ["intent_handler", "chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4"],
+            "requiresCaseId": True,
+            "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+            "argumentBindings": {
+                "actionItemId": "item_id",
+                "dueDate": "suggested_due_date",
+                "applyToAll": "apply_to_all",
+                "searchText": "search_text",
+                "currentStatus": "current_status",
+                "filterStatus": "filter_status",
+                "actionItems": "action_items",
+                "assignedTo": "assigned_to",
+                "assignedToEmails": "assigned_to_emails",
+                "assigneeEmail": "assignee_email",
+                "assigneeUserId": "assignee_user_id",
+            },
+            "invocationGuidance": (
+                "This legacy SeriesAI company-task caller maps to the universal action-item operation for app IDs 3 and 4. "
+                "Use the trusted caseId and appId from the active company workspace. For one task assignment or self-assignment, "
+                "use operation=update with item_id and assigned_to; assignee only filters by the current owner. When asked to execute "
+                "the task, assign it to vienna@nougat.law and continue in the same turn using only tools authorized for this company "
+                "workspace. Record the verified outcome in assistant_excerpt and mark complete only after verification. If a required "
+                "tool, permission, approval, or human decision is unavailable, leave the task incomplete, record the blocker and next "
+                "human action in assistant_excerpt, and reassign it to the delegating user when their identity is available. For an "
+                "explicit request to update every matching task, use operation=update with apply_to_all=true and assigned_to for the "
+                "destination owner(s)."
+            ),
+        },
+    ),
     "advance_lifecycle_stage": (
         {
             "name": "advance_lifecycle_stage",
@@ -2214,6 +2249,37 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
         existing["surfaces"] = list(dict.fromkeys([*(existing.get("surfaces") or []), "mcp"]))
         existing["metadataStatus"] = "shared_metadata_and_mcp_schema"
         existing["mcpCallable"] = True
+
+    # Make the current canonical executor explicit in the universal map.
+    # Caller surfaces are only given a target when the MCP schema is present
+    # and the alias contract has already been verified; inventory-only and
+    # operation-id-only records remain descriptive, never executable.
+    for record in merged.values():
+        canonical_name = str(record.get("name") or record.get("functionId") or "").strip()
+        dispatch_targets: dict[str, dict[str, str]] = {}
+        alias_targets: dict[str, dict[str, str]] = {}
+        if canonical_name and record.get("mcpCallable") is True:
+            canonical_target = {"transport": "django_mcp", "operation": canonical_name}
+            dispatch_targets["mcp"] = canonical_target
+            caller_aliases = record.get("callerAliases")
+            if isinstance(caller_aliases, list):
+                for alias in caller_aliases:
+                    if not isinstance(alias, dict) or alias.get("verification") not in {
+                        "verified_shared_operation_id",
+                        "verified_contract_mapping",
+                    }:
+                        continue
+                    alias_name = str(alias.get("name") or "").strip()
+                    if alias_name:
+                        alias_targets[alias_name] = dict(canonical_target)
+                    surfaces = alias.get("surfaces")
+                    if isinstance(surfaces, list):
+                        for surface in surfaces:
+                            surface_name = str(surface or "").strip()
+                            if surface_name in {"chat_proxy", "intent_handler"}:
+                                dispatch_targets[surface_name] = dict(canonical_target)
+        record["dispatchTargetsBySurface"] = dispatch_targets
+        record["dispatchTargetsByAlias"] = alias_targets
 
     return [merged[name] for name in sorted(merged)]
 

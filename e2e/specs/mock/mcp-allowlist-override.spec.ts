@@ -80,8 +80,8 @@ test.describe('MCP admin-panel allowlist override', () => {
       installed = true;
 
       // The override is honored on reinit: the server now connects. The handler
-      // invalidates config caches asynchronously after responding, so poll until
-      // the merged allowlist has actually landed.
+      // invalidates config caches before responding. Poll until reinitialization
+      // observes the merged allowlist after the database update.
       await expect
         .poll(async () => (await reinitialize(request, headers)).success, {
           timeout: 30000,
@@ -104,8 +104,8 @@ test.describe('MCP admin-panel allowlist override', () => {
        * Confirm the override document is gone, retrying anything that is not a
        * definitive answer (only 200-without-the-override and 404 are). The cache
        * that gates the next spec — the merged app config that agent tool loading
-       * consults per request — is in-memory in these shards and is cleared by the
-       * mutation's (asynchronous) invalidation; the downstream victim,
+       * consults per request — is in-memory in these shards and is cleared before
+       * the mutation responds; the downstream victim,
        * `mcp-oauth-resume`, passes with this cleanup in place. `reinitialize` is
        * deliberately NOT used as the "reverted" signal: a server that has already
        * connected keeps re-initializing successfully long after the override is

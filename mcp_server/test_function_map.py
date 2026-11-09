@@ -165,6 +165,21 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     case_tool_names = {record["name"] for record in case_tools["functions"]}
     assert {"edit_case_action_items", "bulk_edit_case_action_items"} <= case_tool_names
     assert "edit_company_action_items" not in case_tool_names
+    generic_action_item = next(
+        record for record in case_tools["functions"] if record["name"] == "edit_case_action_items"
+    )
+    assert generic_action_item["dispatchTargetsByAlias"]["edit_company_action_items"]["operation"] == (
+        "edit_case_action_items"
+    )
+    alias_guidance = generic_action_item["dispatchTargetsByAlias"]["edit_company_action_items"]["invocationGuidance"]
+    assert "operation=update" in alias_guidance
+    assert "assigned_to" in alias_guidance
+    assert "continue in the same turn" in alias_guidance
+    assert "company workspace" in alias_guidance
+    assert "assistant_excerpt" in alias_guidance
+    assert "next human action" in alias_guidance
+    bulk_action_tool = next(tool for tool in registered_tools if tool.name == "bulk_edit_case_action_items")
+    assert "assigned_to" in bulk_action_tool.parameters.get("properties", {})
     lifecycle_tool = next(tool for tool in registered_tools if tool.name == "advance_lifecycle_stage")
     assert {"caseId", "appId", "lifecycleStage"}.issubset(
         set(lifecycle_tool.parameters.get("required", [])),
@@ -196,15 +211,11 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         assert read_tool["startsAsyncWorkflow"] is False
         assert read_tool["returnsInlineResult"] is True
 
-    company_details = next(
-        record for record in company_operations["functions"] if record["name"] == "get_seriesai_company_details"
-    )
+    company_details = company_by_name["get_seriesai_company_details"]
     assert "company's profile" in company_details["mcpDescription"]
     assert company_details["callerAliases"][0]["name"] == "retrieve_company_details"
     assert company_details["callerAliases"][0]["verification"] == "verified_shared_operation_id"
-    revenue_metrics = next(
-        record for record in company_operations["functions"] if record["name"] == "get_seriesai_revenue_metrics"
-    )
+    revenue_metrics = company_by_name["get_seriesai_revenue_metrics"]
     assert revenue_metrics["appIds"] == ["3", "4", "5"]
     case_management = asyncio.run(server.browse_function_map(object(), "case_management"))
     important_dates = next(
