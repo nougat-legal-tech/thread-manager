@@ -2271,7 +2271,18 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
                         continue
                     alias_name = str(alias.get("name") or "").strip()
                     if alias_name:
-                        alias_targets[alias_name] = dict(canonical_target)
+                        alias_target = dict(canonical_target)
+                        for metadata_key in (
+                            "argumentBindings",
+                            "appIds",
+                            "invocationGuidance",
+                            "requiresCaseId",
+                            "requiredInputs",
+                            "trustedScopeBindings",
+                        ):
+                            if metadata_key in alias:
+                                alias_target[metadata_key] = deepcopy(alias[metadata_key])
+                        alias_targets[alias_name] = alias_target
                     surfaces = alias.get("surfaces")
                     if isinstance(surfaces, list):
                         for surface in surfaces:

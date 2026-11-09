@@ -51,6 +51,77 @@
   </a>
 </p>
 
+## Nougat repository guide
+
+This checkout is a Nougat-maintained LibreChat fork. LibreChat supplies the conversation UI and API; this repository also contains Nougat-specific configuration, a Django-backed MCP sidecar, and Compose services for the supporting stores. The project is a multi-package application, not just the React client.
+
+### What runs here
+
+| Area | Location | Role |
+| --- | --- | --- |
+| Web client | client/ | React application, Vite development server, chat and settings UI. |
+| Application API | api/ and packages/api/ | Express server, routes, chat/provider integrations, and API behavior. |
+| Shared packages | packages/ | Data provider, API, client, data schemas, and other workspace modules. |
+| Database and search | MongoDB/Mongoose, Meilisearch, optional vector database | Conversation and application records, search, and retrieval services. |
+| Django MCP adapter | mcp_server/ | FastMCP service that calls the Django REST API using the caller's authorization context. |
+| Runtime configuration | config/ and librechat.example.yaml | Startup setup, workspace configuration, and Nougat action registration. |
+| Browser and integration QA | e2e/ | Playwright suites, mocks, accessibility checks, and performance benchmarks. |
+
+The root docker-compose.yml also defines the supporting MCP and RAG services. These are separate service boundaries: LibreChat owns its chat UI and API, Django remains the authority for Django-backed records and permissions, and the MCP sidecar forwards authenticated calls rather than replacing Django.
+
+### Local startup
+
+Use the Node version in .nvmrc and the npm package manager version declared in package.json. Docker Compose is the most representative way to run the API with its supporting services:
+
+    npm ci
+    # Create a local .env from .env.example and set required values.
+    docker compose up -d
+
+The default client address is http://localhost:3080. Check the Compose logs if the API is not ready; MongoDB and any configured search/vector services must be healthy first. Never commit the local .env. In particular, MCP_SERVER_SECRET must be shared only with trusted local services, and browser-visible variables must not contain credentials.
+
+For split frontend/backend development, run the API and client from separate terminals:
+
+    npm run backend:dev
+    npm run frontend:dev
+
+The API uses api/server/index.js. Client development is launched from client/ by the root script. Configure MONGO_URI and the client/server domains in .env as appropriate for the local setup. The MCP adapter uses DJANGO_API_BASE_URL, MCP_SERVER_SECRET, and the MCP timeout settings documented in .env.example. Review docker-compose.yml before enabling a sidecar or optional service.
+
+### Tests and checks
+
+Use the narrowest suite that covers your change:
+
+    npm run test:api
+    npm run test:client
+    npm run test:all
+    npm run e2e:mock:ci
+    npm run lint
+
+Workspace builds are available through npm run build and npm run frontend. A successful package build is not necessarily a TypeScript check; follow AGENTS.md and CLAUDE.md for the required typecheck and formatting steps for the package you changed. E2E commands may build the client and require Docker services or configured test dependencies.
+
+### Configuration and service connections
+
+- .env.example documents the local host/port, MongoDB, domain, admin panel, security headers, Django MCP, and optional observability settings.
+- librechat.example.yaml is the starting point for application-level provider and feature configuration. Copy only the settings you need and keep secrets in environment variables.
+- DJANGO_API_BASE_URL selects the Django service used by the MCP adapter. MCP_SERVER_SECRET must match on both sides. Do not expose it to the browser.
+- RAG_PORT and RAG_API_URL configure the RAG integration; the Compose file can run the repository's RAG API service for local integration.
+- SECURITY_HEADERS and CSP settings affect browser policy. Consult .env.example and the existing security documentation before changing production values.
+
+### Where to change things
+
+Keep application behavior in the package that owns it. In particular, api/ is the Express bootstrap and route wiring layer; reusable API behavior belongs in packages/api/. Shared database contracts belong in packages/data-schemas/, and client-facing data access belongs behind the provider/API boundaries. Use client/ for UI behavior and mcp_server/ only for the Django tool adapter.
+
+Before changing a route, schema, authentication flow, or MCP tool, identify its client and service consumers. Preserve the external payload and permission contract and update the focused tests. Read AGENTS.md and CLAUDE.md before substantial changes; they define package boundaries, branching expectations, typechecking, and style constraints.
+
+### Repository documentation
+
+- AGENTS.md — local contribution rules and package boundaries.
+- e2e/README.md and e2e/lighthouse/README.md — browser test setup and performance checks.
+- mcp_server/ — MCP adapter implementation.
+- docs/ and config/ — deployment, feature, and runtime configuration references.
+- README.zh.md — Chinese-language version of the upstream project guide.
+
+The sections below retain the upstream LibreChat project overview and acknowledgements.
+
 ## 🚀 What's New in v0.8.8-rc4
 
 - **Public Agents API docs:** Serve an OpenAPI specification and interactive Swagger UI for inference, events, Agent management, and Skill management.
