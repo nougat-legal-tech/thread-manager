@@ -1175,17 +1175,34 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     // SECOND: Upload to Vector DB
     const { uploadVectors } = require('./VectorDB/crud');
 
-    embeddingResult = await uploadVectors({
-      req,
-      file,
-      file_id,
-      entity_id,
-    });
+    try {
+      embeddingResult = await uploadVectors({
+        req,
+        file,
+        file_id,
+        entity_id,
+      });
+    } catch (error) {
+      if (error?.code !== 'EMBEDDING_QUOTA_EXHAUSTED') {
+        throw error;
+      }
+
+      /* Keep the durable upload and its file record when the provider is out of
+       * credits. File-search provisioning will retry the missing namespace when
+       * the user next asks an agent to search this file. */
+      embeddingResult = { embedded: false };
+      logger.warn(
+        '[processAgentFileUpload] File saved; vector indexing is pending embedding quota',
+      );
+    }
 
     /* Vectors live under the entity that embedded them, and priming asks which namespaces
      * hold them rather than reading the root flag. Omitting it here re-embeds the file on
      * the first search, and aborts that search if RAG is briefly unavailable. */
-    fileInfoMetadata = entity_id != null ? { embeddedEntities: [entity_id] } : {};
+    fileInfoMetadata =
+      embeddingResult?.embedded === true && entity_id != null
+        ? { embeddedEntities: [entity_id] }
+        : {};
   } else if (isImage) {
     /* The conversion is this file's storage step. Uploading the original first left a
      * second object nothing references, and the record's size and dimensions describing
@@ -1354,7 +1371,14 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
 
   const result = await db.createFile(fileInfo, true);
 
-  sendUploadSuccess(res, sseStream, 'Agent file uploaded and processed successfully', result);
+  sendUploadSuccess(
+    res,
+    sseStream,
+    embeddingResult?.embedded === false
+      ? 'Agent file uploaded; search indexing will retry when embedding quota is available'
+      : 'Agent file uploaded and processed successfully',
+    result,
+  );
 };
 
 /**

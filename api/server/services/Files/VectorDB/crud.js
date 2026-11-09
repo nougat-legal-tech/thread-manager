@@ -112,6 +112,17 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, s
       embedded: Boolean(responseData.known_type),
     };
   } catch (error) {
+    const detail = error?.response?.data?.detail;
+    if (detail?.code === 'embedding_quota_exhausted') {
+      logger.warn('Vector indexing deferred because embedding quota is exhausted');
+      throw Object.assign(
+        new Error(
+          detail.message || 'Document indexing is deferred until embedding quota is available.',
+        ),
+        { code: 'EMBEDDING_QUOTA_EXHAUSTED', userErrorStatusCode: 503 },
+      );
+    }
+
     logAxiosError({
       error,
       message: 'Error uploading vectors',
