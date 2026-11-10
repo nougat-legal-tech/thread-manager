@@ -36,6 +36,27 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
 
+def test_financing_summary_map_exposes_case_scoped_document_reads():
+    selected = asyncio.run(server.browse_function_map(object(), "documents_research"))
+    rows = {record["name"]: record for record in selected["functions"]}
+    expected_reads = {
+        "list_uploaded_documents",
+        "search_documents",
+        "search_documents_for_excerpts",
+        "summarize_document",
+    }
+
+    assert expected_reads <= rows.keys()
+    for name in expected_reads:
+        assert rows[name]["mutatesState"] is False
+    assert rows["list_uploaded_documents"]["requiresCaseId"] is True
+    assert rows["summarize_document"]["trustedScopeBindings"] == {
+        "case_id": "caseId",
+        "app_id": "appId",
+    }
+    assert rows["send_uploaded_documents"]["mutatesState"] is True
+
+
 def test_cap_table_legacy_mutations_are_callable_map_entries_with_approval_metadata():
     selected = asyncio.run(server.browse_function_map(object(), "company_operations"))
     records = {record["name"]: record for record in selected["functions"]}
