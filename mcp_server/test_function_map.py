@@ -57,6 +57,17 @@ def test_financing_summary_map_exposes_case_scoped_document_reads():
     assert rows["send_uploaded_documents"]["mutatesState"] is True
 
 
+def test_case_signature_map_entry_is_read_only_and_uses_trusted_scope():
+    selected = asyncio.run(server.browse_function_map(object(), "signatures_approvals"))
+    record = next(item for item in selected["functions"] if item["name"] == "list_case_signatures")
+
+    assert record["mcpCallable"] is True
+    assert record["mutatesState"] is False
+    assert record["requiresCaseId"] is True
+    assert record["trustedScopeBindings"] == {"case_id": "caseId", "app_id": "appId"}
+    assert "this operation has no open_only filter" in record["invocationGuidance"]
+
+
 def test_cap_table_legacy_mutations_are_callable_map_entries_with_approval_metadata():
     selected = asyncio.run(server.browse_function_map(object(), "company_operations"))
     records = {record["name"]: record for record in selected["functions"]}

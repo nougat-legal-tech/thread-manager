@@ -1201,6 +1201,21 @@ MCP_FUNCTION_METADATA["summarize_document"] = {
         "together with the trusted case_id and app_id. Do not invent or substitute a document URL or storage key."
     ),
 }
+MCP_FUNCTION_METADATA["list_case_signatures"] = {
+    "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+    "requiresCaseId": True,
+    "mutatesState": False,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "List signature requests only for the authenticated case. Pass the trusted app_id whenever available, "
+        "because case IDs can overlap across practice areas. Use AI to interpret the user's requested status "
+        "from the returned records; this operation has no open_only filter. Do not infer missing signer details "
+        "or treat another app's requests as belonging to this case."
+    ),
+}
 
 MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
     "edit_case_action_items": (
