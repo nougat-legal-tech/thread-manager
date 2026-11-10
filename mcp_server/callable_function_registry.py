@@ -915,6 +915,7 @@ MCP_FUNCTION_METADATA["join_meeting"] = {
     ),
     "callerDescriptionsBySurface": {
         "chat_proxy": "Join a user-requested Zoom or Teams meeting as the visible Vienna attendee.",
+        "chat_run": "Join a user-requested Zoom or Teams meeting as the visible Vienna attendee.",
     },
 }
 
@@ -932,6 +933,7 @@ MCP_FUNCTION_METADATA["control_meeting_session"] = {
     ),
     "callerDescriptionsBySurface": {
         "chat_proxy": "Pause, resume, mute, stop speech, or leave Vienna's user-owned meeting session.",
+        "chat_run": "Pause, resume, mute, stop speech, or leave Vienna's user-owned meeting session.",
     },
 }
 
@@ -1209,10 +1211,28 @@ MCP_FUNCTION_METADATA["list_case_signatures"] = {
     "sendsUserEmail": False,
     "startsAsyncWorkflow": False,
     "returnsInlineResult": True,
+    "callerResultProjection": {
+        "surface": "slack",
+        "sourcePath": "items",
+        "targetKey": "slackSignatureRequests",
+        "maxItems": 25,
+        "allowedFields": [
+            "signatureRequestId", "documentName", "status", "displayStatus", "caseId", "appId",
+            "sourceLabel", "sourceFileId", "signers", "signedCount", "signerCount", "sentAt",
+            "createdAt", "updatedAt",
+        ],
+        "fieldMappings": {"documentName": "sourceLabel"},
+        "nestedFieldAllowlist": {"signers": ["name", "status"]},
+        "countFields": {
+            "signerCount": {"sourcePath": "signers"},
+            "signedCount": {"sourcePath": "signers", "where": {"field": "status", "equals": "signed", "caseInsensitive": True}},
+        },
+    },
     "invocationGuidance": (
         "List signature requests only for the authenticated case. Pass the trusted app_id whenever available, "
-        "because case IDs can overlap across practice areas. Use AI to interpret the user's requested status "
-        "from the returned records; this operation has no open_only filter. Do not infer missing signer details "
+        "because case IDs can overlap across practice areas. Use the full user request to decide whether "
+        "open_only should be true; when true, completed, voided, declined, cancelled, expired, and failed "
+        "requests are excluded by the authenticated endpoint. Do not infer missing signer details "
         "or treat another app's requests as belonging to this case."
     ),
 }

@@ -65,7 +65,9 @@ def test_case_signature_map_entry_is_read_only_and_uses_trusted_scope():
     assert record["mutatesState"] is False
     assert record["requiresCaseId"] is True
     assert record["trustedScopeBindings"] == {"case_id": "caseId", "app_id": "appId"}
-    assert "this operation has no open_only filter" in record["invocationGuidance"]
+    assert "open_only should be true" in record["invocationGuidance"]
+    assert "open_only" in record["inputSchema"]["properties"]
+    assert record["callerResultProjection"]["targetKey"] == "slackSignatureRequests"
 
 
 def test_cap_table_legacy_mutations_are_callable_map_entries_with_approval_metadata():

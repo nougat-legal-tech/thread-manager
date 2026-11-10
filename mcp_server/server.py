@@ -1585,8 +1585,10 @@ async def retrieve_document_summary(ctx: Context, document_id: str, case_id: str
         "so results and authorization are scoped to the intended app."
     )
 )
-async def list_case_signatures(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
-    return await _get(ctx, f"/api/cases/{case_id}/signatures", {"appId": app_id})
+async def list_case_signatures(
+    ctx: Context, case_id: str, app_id: str | None = None, open_only: bool | None = None
+) -> dict:
+    return await _get(ctx, f"/api/cases/{case_id}/signatures", {"appId": app_id, "openOnly": open_only})
 
 
 @mcp.tool(description="Look up workspace-scoped signature requests for an organization.")
