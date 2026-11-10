@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import mcp_server.server as server
+from mcp_server.callable_function_registry import MCP_FUNCTION_METADATA
 
 
 class _Response:
@@ -96,6 +97,15 @@ def test_join_meeting_forwards_caller_token_scope_and_consent_flag(monkeypatch):
             },
         ),
     ]
+
+
+def test_join_meeting_guidance_allows_direct_link_request_without_second_confirmation():
+    guidance = MCP_FUNCTION_METADATA["join_meeting"]["invocationGuidance"]
+
+    assert "do not ask for a second confirmation" in guidance
+    assert "direct join request with a link supplied for that purpose authorizes this session" in guidance
+    assert "link-only reply authorizes the join when it directly answers Vienna's request" in guidance
+    assert "A bare link without that active join context" in guidance
 
 
 def test_assign_action_item_forwards_vienna_identity_with_authenticated_caller(monkeypatch):
