@@ -327,7 +327,7 @@ describe('initializeAgent — execution context', () => {
       },
       {
         provider: Providers.BEDROCK,
-        clientOptions: { model: 'amazon.nova-micro-v1:0', maxTokens: 4096 },
+        clientOptions: { model: 'amazon.nova-pro-v1:0', maxTokens: 4096 },
       },
       configuredFallback,
     ]);

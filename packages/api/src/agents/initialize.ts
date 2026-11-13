@@ -2275,7 +2275,7 @@ export async function initializeAgent(
       },
       {
         provider: Providers.BEDROCK,
-        clientOptions: { model: 'amazon.nova-micro-v1:0', maxTokens: 4096 },
+        clientOptions: { model: 'amazon.nova-pro-v1:0', maxTokens: 4096 },
       },
     ];
     const configuredFallbacks = Array.isArray(modelParameters.fallbacks)
