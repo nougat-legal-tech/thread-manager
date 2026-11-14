@@ -6,7 +6,7 @@ const { logger, decryptV2 } = require('@librechat/data-schemas');
 const {
   sendEvent,
   isAbortError,
-  logAxiosError,
+  describeToolRequestError,
   detachOnAbort,
   getTokenExpiresAt,
   refreshAccessToken,
@@ -505,7 +505,7 @@ async function createActionTool({
       }
       return response.data;
     } catch (error) {
-      /** Surface the cancellation as a cancellation: `logAxiosError` would log it
+      /** Surface the cancellation as a cancellation: `describeToolRequestError` would log it
        *  at error level and return its text as the tool's result, presenting a
        *  stopped turn as a failed API call. */
       if (isAbortError(error)) {
@@ -513,7 +513,7 @@ async function createActionTool({
         throw error;
       }
       const message = `API call to ${action.metadata.domain} failed:`;
-      return logAxiosError({ message, error });
+      return describeToolRequestError({ message, error });
     }
   };
 

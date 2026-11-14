@@ -15,7 +15,7 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
   isAbortError: jest.fn(() => false),
-  logAxiosError: jest.fn(({ error }) => `error:${error?.message || 'unknown'}`),
+  describeToolRequestError: jest.fn(({ error }) => `error:${error?.message || 'unknown'}`),
   refreshAccessToken: jest.fn(),
   GenerationJobManager: { emitChunk: jest.fn() },
   createSSRFSafeAgents: jest.fn(),
@@ -139,9 +139,9 @@ describe('chat-minted action auth', () => {
 
     it('ignores an untrusted browser origin and uses the configured fallback', () => {
       process.env.DOMAIN_SERVER = 'https://chat.juristai.org/';
-      expect(getChatOAuthOrigin({ headers: { host: 'evil.example', origin: 'https://evil.example' } })).toBe(
-        'https://chat.juristai.org',
-      );
+      expect(
+        getChatOAuthOrigin({ headers: { host: 'evil.example', origin: 'https://evil.example' } }),
+      ).toBe('https://chat.juristai.org');
     });
 
     it('uses the local origin when no public origin or fallback is configured', () => {
@@ -273,10 +273,13 @@ describe('chat-minted action auth', () => {
           requestBuilder: makeRequestBuilder().requestBuilder,
         });
 
-        await tool._call({}, {
-          toolCall: { stepId: 'step-1', id: 'call-1' },
-          metadata: { thread_id: 'thread-1', run_id: 'run-1' },
-        });
+        await tool._call(
+          {},
+          {
+            toolCall: { stepId: 'step-1', id: 'call-1' },
+            metadata: { thread_id: 'thread-1', run_id: 'run-1' },
+          },
+        );
 
         const callbackUrl = `${origin}/api/actions/action-123/oauth/callback`;
         const sentEvent = sendEvent.mock.calls.at(-1)[1];

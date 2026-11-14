@@ -46,6 +46,7 @@ const {
   OpenIDReauthRequiredError,
   MCPAuthenticationRefreshError,
   MCPAuthenticationRejectedError,
+  MCPToolResultError,
   prepareMCPAuthorizationMutation,
 } = require('@librechat/api');
 const {
@@ -1391,7 +1392,8 @@ function createToolInstance({
       if (
         error instanceof OpenIDReauthRequiredError ||
         error instanceof MCPAuthenticationRefreshError ||
-        error instanceof MCPAuthenticationRejectedError
+        error instanceof MCPAuthenticationRejectedError ||
+        error instanceof MCPToolResultError
       ) {
         throw error;
       }

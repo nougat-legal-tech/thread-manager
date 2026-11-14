@@ -14,7 +14,7 @@ jest.mock('@librechat/api', () => ({
   isAbortError: jest.fn((error) => error?.name === 'AbortError'),
   detachOnAbort: jest.fn((promise) => promise),
   getTokenExpiresAt: jest.fn(),
-  logAxiosError: jest.fn(({ error }) => `error:${error?.message || 'unknown'}`),
+  describeToolRequestError: jest.fn(({ error }) => `error:${error?.message || 'unknown'}`),
   refreshAccessToken: jest.fn(),
   GenerationJobManager: { emitChunk: jest.fn() },
   createSSRFSafeAgents: jest.fn(),

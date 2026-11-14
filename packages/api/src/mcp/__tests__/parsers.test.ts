@@ -1,5 +1,10 @@
 import type * as t from '../types';
-import { formatToolContent, DEFAULT_MCP_IMAGE_DATA_MAX_BYTES } from '../parsers';
+import {
+  formatToolContent,
+  assertToolResultSucceeded,
+  DEFAULT_MCP_IMAGE_DATA_MAX_BYTES,
+} from '../parsers';
+import { MCPToolResultError } from '../errors';
 
 describe('formatToolContent', () => {
   describe('unrecognized providers', () => {
@@ -866,5 +871,57 @@ describe('formatToolContent', () => {
         ].join('\n'),
       );
     });
+  });
+});
+
+describe('assertToolResultSucceeded', () => {
+  it('passes results that are not flagged as errors', () => {
+    const result: t.MCPToolCallResponse = { content: [{ type: 'text', text: 'ok' }] };
+
+    expect(() => assertToolResultSucceeded(result, 'srv', 'tool')).not.toThrow();
+    expect(() => assertToolResultSucceeded(undefined, 'srv', 'tool')).not.toThrow();
+    expect(() =>
+      assertToolResultSucceeded({ ...result, isError: false }, 'srv', 'tool'),
+    ).not.toThrow();
+  });
+
+  it('throws a tool-result error carrying the full error text, envelope included', () => {
+    const envelope =
+      'tool_failure={"ok":false,"error":{"class":"reauth_required","httpStatus":401}}';
+    const result: t.MCPToolCallResponse = {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: `Error executing tool get_case: 401 Unauthorized
+${envelope}`,
+        },
+      ],
+    };
+
+    let thrown: unknown;
+    try {
+      assertToolResultSucceeded(result, 'juristai-django', 'get_case');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(MCPToolResultError);
+    const error = thrown as MCPToolResultError;
+    expect(error.serverName).toBe('juristai-django');
+    expect(error.toolName).toBe('get_case');
+    expect(error.detail).toContain(envelope);
+    expect(error.message).toContain('tool reported an error');
+  });
+
+  it('ignores non-text parts and never throws an empty message', () => {
+    const result: t.MCPToolCallResponse = {
+      isError: true,
+      content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }],
+    };
+
+    expect(() => assertToolResultSucceeded(result, 'srv', 'tool')).toThrow(
+      '(no error detail provided)',
+    );
   });
 });

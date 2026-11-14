@@ -475,3 +475,21 @@ export function getMCPErrorResponse(error: unknown): MCPErrorResponse | null {
 
   return null;
 }
+
+/**
+ * The MCP server answered, and its answer was a tool-level failure (`isError: true`).
+ * Kept distinct from transport and auth errors so callers never mistake a failed
+ * tool for an OAuth problem, and never retry it as a connection fault.
+ */
+export class MCPToolResultError extends Error {
+  public readonly code = 'MCP_TOOL_RESULT_ERROR';
+
+  constructor(
+    public readonly serverName: string,
+    public readonly toolName: string,
+    public readonly detail: string,
+  ) {
+    super(`[MCP][${serverName}][${toolName}] tool reported an error: ${detail}`);
+    this.name = 'MCPToolResultError';
+  }
+}

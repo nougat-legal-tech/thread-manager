@@ -87,6 +87,40 @@ export const logAxiosError = ({
   return logMessage;
 };
 
+const MAX_TOOL_ERROR_BODY_CHARS = 2000;
+
+const renderErrorBody = (data: unknown): string => {
+  const rendered = renderResponseData(data);
+  if (rendered == null || rendered === '') {
+    return '';
+  }
+  const text = typeof rendered === 'string' ? rendered : JSON.stringify(rendered);
+  return text.length > MAX_TOOL_ERROR_BODY_CHARS
+    ? `${text.slice(0, MAX_TOOL_ERROR_BODY_CHARS)}…`
+    : text;
+};
+
+/**
+ * Logs an Axios failure and returns the text handed back to the model as a tool
+ * result. Unlike `logAxiosError`, the text keeps the server's response body, so
+ * the model sees which field was rejected or which connection needs attention
+ * instead of only a status line.
+ */
+export const describeToolRequestError = ({
+  message,
+  error,
+}: {
+  message: string;
+  error: AxiosError | Error | unknown;
+}): string => {
+  const summary = logAxiosError({ message, error });
+  if (!axios.isAxiosError(error) || !error.response) {
+    return summary;
+  }
+  const body = renderErrorBody(error.response.data);
+  return body ? `${summary} Response body: ${body}` : summary;
+};
+
 /** Adds upload context without discarding the Axios response metadata used by
  * Code API recovery. Transport-specific branching remains in this typed module. */
 export function wrapCodeApiUploadError(error: unknown, message: string): Error {

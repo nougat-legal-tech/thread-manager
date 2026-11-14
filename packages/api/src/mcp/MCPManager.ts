@@ -33,6 +33,7 @@ import { MCPAuthenticationRejectedError, isMCPTransportAuthenticationError } fro
 import { resolveDirectOpenIDBearerConfig, usesDirectOpenIDBearerRecovery } from './openid';
 import { createLazyOboUpstreamTokenProvider, awaitOboOperation } from '~/mcp/oauth/obo';
 import { MCPServersInitializer } from './registry/MCPServersInitializer';
+import { formatToolContent, assertToolResultSucceeded } from './parsers';
 import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
 import { MCPServerCatalogRecoveryTracker } from './catalog/recovery';
 import { MCPServerInspector } from './registry/MCPServerInspector';
@@ -44,7 +45,6 @@ import { processMCPEnv, isPluginSourced } from '~/utils/env';
 import { OAuthLifecycleRelay } from './oauth/pending';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { isOwnedAbortError } from '~/utils/errors';
-import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
 import { mcpConfig } from './mcpConfig';
 
@@ -1642,6 +1642,7 @@ Please follow these instructions when using tools from the respective MCP server
           await this.updateUserLastActivity(userId);
         }
         this.checkIdleConnections();
+        assertToolResultSucceeded(result as t.MCPToolCallResponse, serverName, toolName);
         return formatToolContent(result as t.MCPToolCallResponse, provider);
       } catch (error) {
         if (error instanceof OAuthRecoveryTakeoverRequired) {

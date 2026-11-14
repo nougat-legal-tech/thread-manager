@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Tools } from 'librechat-data-provider';
 import type { UIResource } from 'librechat-data-provider';
 import type * as t from './types';
+import { MCPToolResultError } from './errors';
 
 export const DEFAULT_MCP_IMAGE_DATA_MAX_BYTES: number = 10 * 1024 * 1024;
 
@@ -223,6 +224,33 @@ function parseAsString(result: t.MCPToolCallResponse): string {
  * All recognized providers currently produce identical string output;
  * provider-specific artifact merging is delegated to the agents package.
  */
+const MAX_TOOL_ERROR_DETAIL_CHARS = 12000;
+
+/**
+ * MCP reports a tool-level failure as a normal response with `isError: true`.
+ * Throwing here keeps that failure a failure for the agent run (error status,
+ * failure hooks) instead of handing the model an error dressed as a result.
+ */
+export function assertToolResultSucceeded(
+  result: t.MCPToolCallResponse,
+  serverName: string,
+  toolName: string,
+): void {
+  if (result?.isError !== true) {
+    return;
+  }
+  const detail = (result.content ?? [])
+    .reduce<string[]>((parts, item) => {
+      if (item.type === 'text' && item.text) {
+        parts.push(item.text);
+      }
+      return parts;
+    }, [])
+    .join('\n\n')
+    .slice(0, MAX_TOOL_ERROR_DETAIL_CHARS);
+  throw new MCPToolResultError(serverName, toolName, detail || '(no error detail provided)');
+}
+
 export function formatToolContent(
   result: t.MCPToolCallResponse,
   provider: t.Provider,
