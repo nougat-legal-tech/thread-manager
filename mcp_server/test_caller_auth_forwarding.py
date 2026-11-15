@@ -1,9 +1,19 @@
 """The MCP bridge must preserve the authenticated caller for Django policy checks."""
 
+from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import mcp_server.server as server
 from mcp_server.callable_function_registry import MCP_FUNCTION_METADATA
+
+
+def test_librechat_config_forwards_the_authenticated_request_bearer():
+    config = (Path(__file__).resolve().parents[1] / "librechat.yaml").read_text(encoding="utf-8")
+    server_config = re.search(r"(?ms)^  juristai-django:\r?\n(.*?)(?=^  [^ ]|\Z)", config)
+    assert server_config is not None
+    assert 'Authorization: "{{LIBRECHAT_REQUEST_AUTHORIZATION}}"' in server_config.group(1)
+    assert 'x-mcp-secret: "${MCP_SERVER_SECRET}"' in server_config.group(1)
 
 
 class _Response:
@@ -163,7 +173,7 @@ def test_edit_company_action_item_uses_universal_action_api(monkeypatch):
     assert calls == [
         (
             "POST",
-            "/api/edit-case-action-items/",
+                "/api/core/edit-case-action-items/",
             {
                 "content": '{"caseId": "juristai", "operation": "update", "itemId": "task-123", "assignedTo": ["vienna@nougat.law"], "appId": "3"}',
             },
@@ -192,7 +202,7 @@ def test_generic_action_item_api_writes_verified_summary_for_seriesai_case(monke
     assert calls == [
         (
             "POST",
-            "/api/edit-case-action-items/",
+                "/api/core/edit-case-action-items/",
             {
                 "content": '{"caseId": "juristai", "operation": "update", "itemId": "task-123", "assistantExcerpt": "Verified progress.", "assignedTo": ["vienna@nougat.law"], "appId": "3"}',
             },
@@ -220,7 +230,7 @@ def test_generic_bulk_action_api_can_assign_every_seriesai_task(monkeypatch):
     assert calls == [
         (
             "POST",
-            "/api/action-items/bulk/",
+                "/api/core/action-items/bulk/",
             {
                 "content": '{"caseId": "juristai", "operation": "update", "assignee": "vienna@nougat.law", "applyToAll": true, "appId": "3"}',
             },

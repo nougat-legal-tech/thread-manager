@@ -19,6 +19,7 @@ normal JWT auth applies.
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 from typing import Any
@@ -69,7 +70,12 @@ mcp = FastMCP(
     instructions=(
         "Tools for the Vienna legal platform. "
         "Always supply caseId when the tool requires it. "
-        "Prefer read-only tools unless the user explicitly requests a mutation."
+        "Prefer read-only tools unless the user explicitly requests a mutation. "
+        "When a tool fails, its error ends with a tool_failure JSON object. Follow its recovery.allowed value: "
+        "repair = fix the input and call again (at most twice); retry_once = one more attempt; "
+        "verify = the write may have landed, so never re-send it, check with a read tool instead; "
+        "ask_user = the user must act; stop = report the failure. "
+        "Always tell the user what failed and whether anything was changed."
     ),
 )
 
@@ -129,53 +135,288 @@ def _resolve_path(path: str) -> str:
     return path
 
 
+# ---------------------------------------------------------------------------
+# Tool failure envelope
+#
+# Every failed Django call still raises (so FastMCP flags the result isError
+# and tool bodies never see an error dict where they expect data), but the
+# message ends with a machine-readable tool-failure object:
+#
+#     tool_failure, followed by a JSON object with status and side-effect fields
+#
+# Callers (LibreChat, chat_proxy, Slack) read that line instead of guessing
+# from prose. Contract: docs/architecture/
+# agentic-tool-recovery-and-scoped-automations-spec.md, section A2.
+# ---------------------------------------------------------------------------
+
+TOOL_FAILURE_MARKER = "tool_failure="
+_failure_logger = logging.getLogger("juristai.mcp.tool_failure")
+_TRANSIENT_STATUSES = frozenset({408, 425, 429, 502, 503, 504})
+_STATUS_FAILURE_CLASSES = {
+    400: "invalid_input",
+    401: "reauth_required",
+    403: "permission_denied",
+    404: "not_found",
+    409: "conflict",
+    422: "invalid_input",
+}
+_USER_ACTIONS = {
+    "reauth_required": "sign_in_again",
+    "permission_denied": "ask_an_admin",
+    "needs_confirmation": "confirm",
+}
+_NEVER_SENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+_FAILURE_DETAIL_LIMIT = 2000
+
+# Automatic retry (spec A3, rung 0). One retry by default; 0 disables it.
+_TRANSIENT_RETRIES = max(0, int(os.getenv("MCP_DJANGO_TRANSIENT_RETRIES", "1")))
+_RETRY_DEFAULT_DELAY_SECONDS = 0.5
+_RETRY_MAX_WAIT_SECONDS = 5
+_retry_sleep = asyncio.sleep
+
+# What the calling agent may do next, by failure class (spec A3, rungs 2-5).
+# The caller enforces the budgets; this states what is allowed at all.
+_RECOVERY_BY_CLASS = {
+    "transient": ("retry_once", "The automatic retry also failed. Retry at most once more, then report."),
+    "invalid_input": ("repair", "Fix the rejected input (look up the right id or field with a read tool) and call again."),
+    "not_found": ("repair", "Look up the correct identifier with a read tool and call again."),
+    "conflict": ("repair", "Re-read the current state, then call again only if it is still needed."),
+    "unknown_outcome": (
+        "verify",
+        "The request may have gone through. Do NOT call this tool again. "
+        "Check the result with a read tool, then tell the user what you found.",
+    ),
+    "needs_confirmation": ("ask_user", "Ask the user to confirm, then call again."),
+    "reauth_required": ("ask_user", "Tell the user to sign in or reconnect the integration. Do not retry."),
+    "permission_denied": ("ask_user", "Tell the user they lack access and who can grant it. Do not retry."),
+    "internal": ("stop", "Do not retry. Report the failure and that nothing was changed."),
+}
+
+
+def _response_body(response: httpx.Response | None) -> Any:
+    if response is None:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _failure_detail_and_code(body: Any) -> tuple[str | None, str | None]:
+    if isinstance(body, list):
+        return json.dumps(body, ensure_ascii=False, separators=(",", ":"))[:_FAILURE_DETAIL_LIMIT], None
+    if not isinstance(body, dict):
+        return None, None
+    code = body.get("code")
+    error = body.get("error")
+    if not isinstance(code, str) and isinstance(error, str) and error and " " not in error:
+        code = error
+    for key in ("detail", "message", "error"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip() and value != code:
+            return value.strip()[:_FAILURE_DETAIL_LIMIT], code if isinstance(code, str) else None
+    detail = json.dumps(body, ensure_ascii=False, separators=(",", ":"))[:_FAILURE_DETAIL_LIMIT]
+    return detail, code if isinstance(code, str) else None
+
+
+def _retry_after_seconds(response: httpx.Response | None) -> int | None:
+    raw = response.headers.get("Retry-After") if response is not None else None
+    try:
+        return max(0, int(str(raw).strip())) if raw else None
+    except ValueError:
+        return None
+
+
+def _http_failure_classification(method: str, status: int) -> tuple[str, str]:
+    # A 4xx (and a 429) is a refusal: Django did not run the operation.
+    if status in _TRANSIENT_STATUSES:
+        failure_class = "transient"
+    elif status in _STATUS_FAILURE_CLASSES:
+        failure_class = _STATUS_FAILURE_CLASSES[status]
+    elif status >= 500:
+        failure_class = "internal"
+    else:
+        failure_class = "invalid_input"
+    side_effect_state = "none" if method.upper() == "GET" or status < 500 else "unknown"
+    return failure_class, side_effect_state
+
+
+def _transport_failure_classification(
+    method: str, exc: Exception | None, detail: str | None
+) -> tuple[str, str, str | None]:
+    is_read = method.upper() == "GET"
+    if isinstance(exc, _NEVER_SENT_ERRORS):
+        return "transient", "none", detail
+    if detail is None and exc is not None:
+        detail = type(exc).__name__
+    return "transient", "none" if is_read else "unknown", detail
+
+
+def _failure_user_action(body: Any, code: str | None, failure_class: str) -> tuple[str, str | None]:
+    user_action = _USER_ACTIONS.get(failure_class)
+    if isinstance(body, dict):
+        if code == "confirmation_required":
+            return "needs_confirmation", "confirm"
+        if code == "reauth_required" or body.get("reauthorizationRequired") is True:
+            return "reauth_required", "reconnect_integration"
+    return failure_class, user_action
+
+
+def _tool_failure_envelope(
+    method: str,
+    path: str,
+    *,
+    response: httpx.Response | None = None,
+    exc: Exception | None = None,
+) -> dict[str, Any]:
+    """Classify one failed Django call. Never raises."""
+    body = _response_body(response)
+    detail, code = _failure_detail_and_code(body)
+    status = response.status_code if response is not None else None
+
+    if status is not None:
+        failure_class, side_effect_state = _http_failure_classification(method, status)
+    else:
+        # Read timeout, dropped connection: the request left, the answer did not arrive.
+        failure_class, side_effect_state, detail = _transport_failure_classification(method, exc, detail)
+
+    failure_class, user_action = _failure_user_action(body, code, failure_class)
+    if side_effect_state == "unknown":
+        # A write that may have landed must never be classified as safely retryable.
+        failure_class = "unknown_outcome"
+
+    return {
+        "ok": False,
+        "error": {
+            "class": failure_class,
+            "code": code,
+            "httpStatus": status,
+            "detail": detail,
+            "retryable": failure_class == "transient",
+            "retryAfterSeconds": _retry_after_seconds(response),
+            "sideEffectState": side_effect_state,
+            "userActionRequired": user_action,
+            "method": method.upper(),
+            "path": path,
+        },
+        "recovery": dict(zip(("allowed", "guidance"), _RECOVERY_BY_CLASS[failure_class], strict=True)),
+    }
+
+
+def _tool_failure_message(summary: str, envelope: dict[str, Any]) -> str:
+    """Render the failure for the model and record it once, at the only place every failure passes through."""
+    error = envelope["error"]
+    # The failure log for tool recovery (spec A5). ``detail`` and ``path`` are
+    # left out: they can contain user/matter content or resource identifiers.
+    _failure_logger.warning(
+        "mcp.tool_failure class=%s status=%s side_effect=%s retryable=%s method=%s code=%s",
+        error["class"],
+        error["httpStatus"],
+        error["sideEffectState"],
+        error["retryable"],
+        error["method"],
+        error["code"],
+    )
+    return f"{summary}\n{TOOL_FAILURE_MARKER}{json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))}"
+
+
+def _status_failure(
+    method: str,
+    path: str,
+    exc: httpx.HTTPStatusError,
+    envelope: dict[str, Any] | None = None,
+) -> httpx.HTTPStatusError:
+    response = exc.response
+    body = _response_body(response)
+    summary = str(exc)
+    if path == "/api/core/add-case/" and response.status_code == 400 and isinstance(body, (dict, list)):
+        # Django's add-case endpoint returns field-level serializer errors as a
+        # safe JSON body. Keep them in the prose so Vienna can ask for a
+        # correction instead of reporting only "HTTP 400".
+        validation = json.dumps(body, ensure_ascii=False, separators=(",", ":"))[:4000]
+        summary = f"{exc}. Django validation details: {validation}"
+    elif 400 <= response.status_code < 500:
+        # Django views return a user-safe ``detail`` for expected 4xx states
+        # such as "Connect DocuSign from Connections ...". Without it Vienna
+        # could only say "400 Bad Request" (live 2026-11-05, Slack
+        # 1793874558.879829 DocuSign / WhatsApp lists).
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if isinstance(detail, str) and detail.strip():
+            summary = f"{exc}. Detail: {detail.strip()[:500]}"
+    if envelope is None:
+        envelope = _tool_failure_envelope(method, path, response=response)
+    return httpx.HTTPStatusError(_tool_failure_message(summary, envelope), request=exc.request, response=response)
+
+
+def _retry_delay_seconds(envelope: dict[str, Any]) -> float | None:
+    """Seconds to wait before the one automatic retry, or None when retrying is not provably safe.
+
+    Safe means both: the failure is transient, and Django provably did not run
+    the operation (a read, a refusal such as 429, or a connection that never
+    opened). A write that timed out or hit a gateway error is never re-sent.
+    """
+    error = envelope["error"]
+    if error["class"] != "transient" or error["sideEffectState"] != "none":
+        return None
+    retry_after = error["retryAfterSeconds"]
+    if retry_after is None:
+        return _RETRY_DEFAULT_DELAY_SECONDS
+    return float(retry_after) if retry_after <= _RETRY_MAX_WAIT_SECONDS else None
+
+
+async def _send_once(method: str, path: str, send: Any) -> httpx.Response:
+    try:
+        response = await send()
+    except httpx.TransportError as exc:
+        envelope = _tool_failure_envelope(method, path, exc=exc)
+        failure = type(exc)(str(exc) or type(exc).__name__, request=getattr(exc, "_request", None))
+        failure.tool_failure_envelope = envelope
+        raise failure from exc
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        exc.tool_failure_envelope = _tool_failure_envelope(method, path, response=exc.response)
+        raise
+    return response
+
+
+async def _checked(method: str, path: str, send: Any) -> httpx.Response:
+    """Run one Django call (``send`` starts a fresh attempt each time it is called).
+
+    A provably side-effect-free transient failure is retried automatically, up
+    to ``MCP_DJANGO_TRANSIENT_RETRIES`` times. Whatever still fails is raised
+    with the failure envelope appended to its message.
+    """
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return await _send_once(method, path, send)
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+            envelope = exc.tool_failure_envelope
+            delay = _retry_delay_seconds(envelope) if attempts <= _TRANSIENT_RETRIES else None
+            if delay is not None:
+                await _retry_sleep(delay)
+                continue
+            envelope["error"]["attempts"] = attempts
+            if isinstance(exc, httpx.HTTPStatusError):
+                raise _status_failure(method, path, exc, envelope) from exc
+            message = _tool_failure_message(str(exc), envelope)
+            raise type(exc)(message, request=getattr(exc, "_request", None)) from exc
+
+
 async def _get(ctx: Context, path: str, params: dict | None = None) -> dict[str, Any]:
     async with _client(_token(ctx)) as c:
-        r = await c.get(_resolve_path(path), params={k: v for k, v in (params or {}).items() if v is not None})
-        try:
-            r.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # Django views return a user-safe ``detail`` for expected 4xx
-            # states such as "Connect DocuSign from Connections ...". Without
-            # it Vienna could only say "400 Bad Request" (live 2026-11-05,
-            # Slack 1793874558.879829 DocuSign / WhatsApp lists).
-            if 400 <= r.status_code < 500:
-                try:
-                    body = r.json()
-                except ValueError:
-                    body = None
-                detail = body.get("detail") if isinstance(body, dict) else None
-                if isinstance(detail, str) and detail.strip():
-                    message = f"{exc}. Detail: {detail.strip()[:500]}"
-                    raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
-            raise
+        resolved_path = _resolve_path(path)
+        query = {k: v for k, v in (params or {}).items() if v is not None}
+        r = await _checked("GET", resolved_path, lambda: c.get(resolved_path, params=query))
         return r.json()
 
 
 async def _post(ctx: Context, path: str, body: dict) -> dict[str, Any]:
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
-        r = await c.post(resolved_path, content=json.dumps(body))
-        try:
-            r.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # Django's add-case endpoint returns field-level serializer errors
-            # as a safe JSON body. Preserve those details across MCP so Vienna
-            # can ask for a correction instead of reporting only "HTTP 400".
-            if resolved_path == "/api/core/add-case/" and r.status_code == 400:
-                try:
-                    validation_errors = r.json()
-                except ValueError:
-                    validation_errors = None
-                if isinstance(validation_errors, (dict, list)):
-                    detail = json.dumps(validation_errors, ensure_ascii=False, separators=(",", ":"))[:4000]
-                    message = f"{exc}. Django validation details: {detail}"
-                    raise httpx.HTTPStatusError(
-                        message,
-                        request=exc.request,
-                        response=exc.response,
-                    ) from exc
-            raise
+        r = await _checked("POST", resolved_path, lambda: c.post(resolved_path, content=json.dumps(body)))
         return r.json()
 
 
@@ -196,18 +437,15 @@ def _seriesai_litigation_block(app_id: str | None, operation: str) -> dict[str, 
 async def _patch(ctx: Context, path: str, body: dict) -> dict[str, Any]:
     async with _client(_token(ctx)) as c:
         path = _resolve_path(path)
-        r = await c.patch(path, content=json.dumps(body))
-        r.raise_for_status()
+        r = await _checked("PATCH", path, lambda: c.patch(path, content=json.dumps(body)))
         return r.json()
 
 
 async def _delete(ctx: Context, path: str, params: dict | None = None) -> dict[str, Any]:
     async with _client(_token(ctx)) as c:
-        r = await c.delete(
-            _resolve_path(path),
-            params={k: v for k, v in (params or {}).items() if v is not None},
-        )
-        r.raise_for_status()
+        resolved_path = _resolve_path(path)
+        query = {k: v for k, v in (params or {}).items() if v is not None}
+        r = await _checked("DELETE", resolved_path, lambda: c.delete(resolved_path, params=query))
         return r.json() if r.content else {"status": "deleted"}
 
 

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Buffer } from 'buffer';
 import { logger } from '@librechat/data-schemas';
 import type { AxiosInstance, AxiosProxyConfig, AxiosError } from 'axios';
+import { buildToolFailureEnvelope, formatToolFailure } from './failure';
 
 /**
  * Render `error.response.data` as a small, log-safe value. Axios surfaces
@@ -89,6 +90,9 @@ export const logAxiosError = ({
 
 const MAX_TOOL_ERROR_BODY_CHARS = 2000;
 
+/** Node error codes meaning the connection never opened, so the server ran nothing. */
+const NEVER_SENT_ERROR_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']);
+
 const renderErrorBody = (data: unknown): string => {
   const rendered = renderResponseData(data);
   if (rendered == null || rendered === '') {
@@ -114,11 +118,18 @@ export const describeToolRequestError = ({
   error: AxiosError | Error | unknown;
 }): string => {
   const summary = logAxiosError({ message, error });
-  if (!axios.isAxiosError(error) || !error.response) {
+  if (!axios.isAxiosError(error)) {
     return summary;
   }
-  const body = renderErrorBody(error.response.data);
-  return body ? `${summary} Response body: ${body}` : summary;
+  const failure = formatToolFailure(
+    buildToolFailureEnvelope({
+      method: error.config?.method,
+      status: error.response?.status,
+      neverSent: !error.response && NEVER_SENT_ERROR_CODES.has(error.code ?? ''),
+    }),
+  );
+  const body = error.response ? renderErrorBody(error.response.data) : '';
+  return body ? `${summary} Response body: ${body}\n${failure}` : `${summary}\n${failure}`;
 };
 
 /** Adds upload context without discarding the Axios response metadata used by
