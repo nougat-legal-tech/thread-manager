@@ -71,8 +71,14 @@ const restoreResumeContext = async (req, res, next) => {
   next();
 };
 
-router.use(restoreResumeContext);
 router.use(applyViennaMeetingRetention);
+router.use(restoreResumeContext);
+router.use('/meeting-turn', (req, res, next) => {
+  if (!req._agentEventBindingRetention || req.body?.channel !== 'meeting') {
+    return res.status(401).json({ error: 'meeting_retention_grant_required' });
+  }
+  next();
+});
 router.use(
   createMessageFilterPii({
     onTraversalFailure: reportLocatorTraversalFailure,
@@ -106,6 +112,13 @@ const resumeController = async (req, res, next) => {
  * @returns {void}
  */
 router.post('/resume', resumeController);
+
+/**
+ * @route POST /meeting-turn
+ * @desc Run one session-bound Vienna turn through the existing agent controller.
+ * @access Private to the Django meeting service and its short-lived signed grant.
+ */
+router.post('/meeting-turn', controller);
 
 /**
  * @route POST / (regular endpoint)

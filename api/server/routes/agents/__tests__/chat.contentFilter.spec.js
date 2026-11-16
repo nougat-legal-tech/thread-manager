@@ -67,6 +67,16 @@ describe('agents chat content filtering', () => {
     expect(retentionIndex).toBeLessThan(middleware.indexOf(mockModerateText));
   });
 
+  it('registers a dedicated meeting-turn route before the generic ephemeral-agent route', () => {
+    const router = require('../chat');
+    const meetingIndex = router.stack.findIndex((layer) => layer.route?.path === '/meeting-turn');
+    const genericIndex = router.stack.findIndex((layer) => layer.route?.path === '/:endpoint');
+
+    expect(meetingIndex).toBeGreaterThanOrEqual(0);
+    expect(genericIndex).toBeGreaterThan(meetingIndex);
+    expect(router.stack[meetingIndex].route.methods.post).toBe(true);
+  });
+
   it('logs only bounded metadata when resume context restoration fails', async () => {
     const api = require('@librechat/api');
     const router = require('../chat');
