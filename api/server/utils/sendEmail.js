@@ -166,6 +166,15 @@ const sendEmail = async ({ email, subject, payload, template, throwError = true 
       html: html,
     };
 
+    const smtpProvider =
+      `${process.env.EMAIL_SERVICE || ''} ${process.env.EMAIL_HOST || ''}`.toLowerCase();
+    if (smtpProvider.includes('amazonaws.com') || smtpProvider.includes('ses')) {
+      mailOptions.headers = {
+        'X-SES-CONFIGURATION-SET':
+          process.env.SES_CONFIGURATION_SET || 'juristai-transactional-outbound',
+      };
+    }
+
     return await sendEmailViaSMTP({ transporterOptions, mailOptions });
   } catch (error) {
     if (throwError) {

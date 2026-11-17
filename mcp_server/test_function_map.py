@@ -551,6 +551,7 @@ def test_action_item_filters_match_django_api_query_contract(monkeypatch):
             "includeArchived": False,
             "parentTaskId": "task-1",
             "resultLimit": 80,
+            "resultOffset": None,
             "includeLifecycleSuggestions": True,
         },
     }

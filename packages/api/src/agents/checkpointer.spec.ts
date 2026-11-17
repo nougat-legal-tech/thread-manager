@@ -88,12 +88,10 @@ describe('getAgentCheckpointer', () => {
       databaseName: 'checkpointer-cache-test',
       collection: () => ({ createIndex: jest.fn().mockResolvedValue('index') }),
     };
-    const getClient = jest
-      .spyOn(connection, 'getClient')
-      .mockReturnValue({
-        appendMetadata: jest.fn(),
-        db: () => fakeDb,
-      } as never);
+    const getClient = jest.spyOn(connection, 'getClient').mockReturnValue({
+      appendMetadata: jest.fn(),
+      db: () => fakeDb,
+    } as never);
     const setup = jest.spyOn(LazyMongoSaver.prototype, 'setup').mockResolvedValue([]);
     Object.defineProperty(connection, 'readyState', { configurable: true, value: 1 });
     Object.defineProperty(connection, 'db', { configurable: true, value: fakeDb });

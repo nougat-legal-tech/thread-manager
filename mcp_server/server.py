@@ -178,7 +178,10 @@ _retry_sleep = asyncio.sleep
 # The caller enforces the budgets; this states what is allowed at all.
 _RECOVERY_BY_CLASS = {
     "transient": ("retry_once", "The automatic retry also failed. Retry at most once more, then report."),
-    "invalid_input": ("repair", "Fix the rejected input (look up the right id or field with a read tool) and call again."),
+    "invalid_input": (
+        "repair",
+        "Fix the rejected input (look up the right id or field with a read tool) and call again.",
+    ),
     "not_found": ("repair", "Look up the correct identifier with a read tool and call again."),
     "conflict": ("repair", "Re-read the current state, then call again only if it is still needed."),
     "unknown_outcome": (
@@ -635,6 +638,7 @@ async def list_action_items(
     include_archived: bool | None = None,
     parent_task_id: str | None = None,
     result_limit: int | None = None,
+    result_offset: int | None = None,
     include_lifecycle_suggestions: bool | None = None,
     item_id: str | None = None,
 ) -> dict:
@@ -652,6 +656,7 @@ async def list_action_items(
             "includeArchived": include_archived,
             "parentTaskId": parent_task_id,
             "resultLimit": result_limit,
+            "resultOffset": result_offset,
             "includeLifecycleSuggestions": include_lifecycle_suggestions,
         },
     )
@@ -893,16 +898,90 @@ async def get_case_calendar(ctx: Context, case_id: str, app_id: str | None = Non
 
 @mcp.tool(
     description=(
+        "Generate or regenerate an AI meeting-preparation brief only when the user explicitly asks. "
+        "Use the authenticated user's meeting details; never invent an event, attendee, date, or case. "
+        "When a caseId is supplied Django checks that the authenticated user can access it. "
+        "Set force=true only when the user asks for a fresh version. Returns the saved brief or a "
+        "retryable error."
+    ),
+)
+async def generate_meeting_prep(
+    ctx: Context,
+    event_title: str,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    time_zone: str | None = None,
+    attendees: list[str] | None = None,
+    event_notes: str | None = None,
+    conference_url: str | None = None,
+    external_event_id: str | None = None,
+    case_id: str | None = None,
+    case_name: str | None = None,
+    app_id: str | None = None,
+    force: bool = False,
+) -> dict:
+    """Use Django's authenticated mutation for meeting-prep generation."""
+    title = str(event_title or "").strip()
+    if not title:
+        return {"success": False, "error": "A meeting title is required."}
+
+    input_data = {
+        "eventTitle": title,
+        "startAt": start_at,
+        "endAt": end_at,
+        "timeZone": time_zone,
+        "attendees": attendees,
+        "eventNotes": event_notes,
+        "conferenceUrl": conference_url,
+        "externalEventId": external_event_id,
+        "caseId": case_id,
+        "caseName": case_name,
+        "appId": app_id,
+        "force": force,
+    }
+    input_data = {key: value for key, value in input_data.items() if value is not None}
+    response = await _post(
+        ctx,
+        "/api/core/graphql/",
+        {
+            "operationName": "GenerateMeetingPrep",
+            "query": (
+                "mutation GenerateMeetingPrep($input: MeetingPrepInput!) {"
+                " generateMeetingPrep(input: $input) { meetingPrep {"
+                " prepId eventTitle startAt endAt timeZone attendees summary"
+                " recommendedAgenda questionsToAsk openItems risks sourceReferences status"
+                " } } }"
+            ),
+            "variables": {"input": input_data},
+        },
+    )
+    errors = response.get("errors") if isinstance(response, dict) else None
+    if errors:
+        message = next(
+            (str(error.get("message")) for error in errors if isinstance(error, dict) and error.get("message")),
+            "Meeting preparation could not be generated. Please retry.",
+        )
+        return {"success": False, "error": message}
+
+    data = response.get("data") if isinstance(response, dict) else None
+    mutation = data.get("generateMeetingPrep") if isinstance(data, dict) else None
+    meeting_prep = mutation.get("meetingPrep") if isinstance(mutation, dict) else None
+    if not isinstance(meeting_prep, dict) or not meeting_prep.get("summary"):
+        return {"success": False, "error": "No meeting brief was returned. Please retry."}
+    return {"success": True, "meetingPrep": meeting_prep}
+
+
+@mcp.tool(
+    description=(
         "Join a Zoom or Microsoft Teams meeting as the visible Vienna attendee. Use when the authenticated user "
-        "asks Vienna to join, or directly sends Vienna a meeting link in a one-to-one assistant conversation "
-        "through the app, email, WhatsApp, Slack, or Teams. Before calling, disclose that Vienna joins visibly, "
-        "processes live meeting audio, and retains the transcript and summary under the user's meeting settings. "
-        "A direct request to join with a link supplied for that purpose authorizes this session; do not ask for a "
-        "second confirmation. A link-only reply also authorizes the join when it directly answers Vienna's request "
-        "for that meeting link. A bare link without that active join context, or a link supplied only for inspection, "
-        "summarization, or in quoted/third-party content, is not a join request. Pass the link exactly as supplied "
-        "and never claim Vienna joined unless the returned state confirms active attendance. Provider admission "
-        "requirements still apply."
+        "directly asks Vienna to join and supplies the link, or sends the link as a direct reply after Vienna asks "
+        "for it, in a one-to-one assistant conversation through the app, email, WhatsApp, Slack, or Teams. Treat "
+        "that direct request and link as sufficient instruction; do not require a second confirmation or redirect "
+        "the user to another page. Before or while starting, disclose that Vienna joins visibly and processes live "
+        "meeting audio for transcription and AI notes, and remind the user to notify attendees. Do not wait for "
+        "another yes after the user has directly requested the join with its link. Do not join links found only in "
+        "quoted or third-party content, or links the user shares only for inspection. Pass the link exactly as "
+        "supplied and never claim Vienna joined unless the returned state confirms active attendance."
     ),
 )
 async def join_meeting(
@@ -1349,6 +1428,33 @@ async def read_people_dossiers(
         body["includeAll"] = True
     body["appId"] = app_id
     return await _post(ctx, "/api/read-people-dossiers/", body)
+
+
+@mcp.tool(
+    description=(
+        "List the authenticated user's case contacts, CourtListener parties, counsel, and judges with their recorded roles."
+    ),
+)
+async def retrieve_case_individuals(ctx: Context, case_id: str, app_id: str) -> dict:
+    """Return the complete roster for an authorized case without model-supplied user identity."""
+    query = """
+    query CaseIndividuals($appId: String!, $caseId: String!) {
+      authenticatedCaseIndividualsByCaseId(appId: $appId, caseId: $caseId) {
+        displayName entityType roles groupForCase(caseId: $caseId)
+      }
+    }
+    """
+    payload = await _post(
+        ctx,
+        "/api/core/graphql/",
+        {"query": query, "variables": {"appId": app_id, "caseId": case_id}},
+    )
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if errors:
+        raise ValueError("Case roster lookup failed authorization or query validation.")
+    data = payload.get("data") if isinstance(payload, dict) else None
+    roster = data.get("authenticatedCaseIndividualsByCaseId") if isinstance(data, dict) else None
+    return {"caseId": case_id, "appId": app_id, "individuals": roster or []}
 
 
 @mcp.tool(description="Search cases and dockets by keyword, docket number, or jurisdiction.")
@@ -1820,13 +1926,24 @@ async def retrieve_document_summary(ctx: Context, document_id: str, case_id: str
 @mcp.tool(
     description=(
         "Look up signature requests for a case. Pass app_id when the case may exist in more than one practice area "
-        "so results and authorization are scoped to the intended app."
+        "so results and authorization are scoped to the intended app. Set open_only to return only requests that "
+        "have not reached a terminal state."
     )
 )
 async def list_case_signatures(
-    ctx: Context, case_id: str, app_id: str | None = None, open_only: bool | None = None
+    ctx: Context,
+    case_id: str,
+    app_id: str | None = None,
+    open_only: bool | None = None,
 ) -> dict:
-    return await _get(ctx, f"/api/cases/{case_id}/signatures", {"appId": app_id, "openOnly": open_only})
+    params = {"appId": app_id}
+    if open_only is not None:
+        params["openOnly"] = open_only
+    return await _get(
+        ctx,
+        f"/api/cases/{case_id}/signatures",
+        params,
+    )
 
 
 @mcp.tool(description="Look up workspace-scoped signature requests for an organization.")
@@ -4767,7 +4884,9 @@ async def create_self_sign_session(ctx: Context, signature_id: str) -> dict:
     return await _post(ctx, f"/api/signatures/requests/{signature_id}/self-sign-session", {})
 
 
-@mcp.tool(description="Add a new step/collaborator to an in-progress case-add workflow.")
+@mcp.tool(
+    description="Start the existing-case assignment workflow for a known docket and explicit represented-side role."
+)
 async def add_case_step(
     ctx: Context,
     docket_id: str,
@@ -4946,6 +5065,64 @@ async def series_ai_request_signatures_via_email(
     _set_payload_value(payload, "message", message)
     _set_payload_value(payload, "expiresInDays", expires_in_days)
     return await _post(ctx, "/api/tools/execute/", payload)
+
+
+@mcp.tool(
+    description=(
+        "Import the exact user-supplied SeriesAI cap-table spreadsheet from its staged company attachment. "
+        "Requires explicit user confirmation. A complete file is committed; an incomplete file is not written "
+        "and returns the exact completion question to ask. Never invent an S3 bucket or key."
+    )
+)
+async def import_cap_table_file(
+    ctx: Context,
+    appId: str,  # noqa: N803 - canonical universal-map schema.
+    caseId: str,  # noqa: N803 - canonical universal-map schema.
+    fileName: str,  # noqa: N803 - canonical universal-map schema.
+    s3Bucket: str,  # noqa: N803 - canonical universal-map schema.
+    s3Key: str,  # noqa: N803 - canonical universal-map schema.
+    approved: bool = False,
+) -> dict:
+    """Run the authenticated, company-scoped two-phase cap-table importer."""
+    if approved is not True:
+        return {
+            "success": False,
+            "error": "Explicit user confirmation is required before importing this cap-table file.",
+        }
+    response = await _post(
+        ctx,
+        "/api/core/graphql/",
+        {
+            "operationName": "ImportSeriesaiCapTable",
+            "query": (
+                "mutation ImportSeriesaiCapTable($appId: String!, $caseId: String!, $fileName: String!, "
+                "$s3Bucket: String!, $s3Key: String!, $approved: Boolean!) {"
+                " importSeriesaiCapTable(appId: $appId, organizationId: $caseId, fileName: $fileName, "
+                's3Bucket: $s3Bucket, s3Key: $s3Key, mode: "auto", approved: $approved)'
+                " }"
+            ),
+            "variables": {
+                "appId": appId,
+                "caseId": caseId,
+                "fileName": fileName,
+                "s3Bucket": s3Bucket,
+                "s3Key": s3Key,
+                "approved": approved,
+            },
+        },
+    )
+    errors = response.get("errors") if isinstance(response, dict) else None
+    if errors:
+        message = next(
+            (str(error.get("message")) for error in errors if isinstance(error, dict) and error.get("message")),
+            "Cap-table import failed.",
+        )
+        return {"success": False, "error": message}
+    data = response.get("data") if isinstance(response, dict) else None
+    result = data.get("importSeriesaiCapTable") if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        return {"success": False, "error": "Cap-table import returned no result."}
+    return {"success": True, "import": result}
 
 
 @mcp.tool(
@@ -5137,6 +5314,141 @@ async def manage_workflow_action(
         if value is not None
     }
     return await _post(ctx, f"/api/core/workflows/runs/{quote(str(run_id), safe='')}/actions", body)
+
+
+# ---------------------------------------------------------------------------
+# Scoped automations (recurring user / team / firm jobs)
+#
+# The assistant may propose; a person must confirm. propose_automation only
+# saves a draft and returns a preview - nothing is scheduled until
+# manage_automation(action="confirm") is called after an explicit yes.
+# ---------------------------------------------------------------------------
+
+_AUTOMATION_ACTIONS = ("confirm", "approve", "pause", "resume", "delete", "mute", "unmute")
+_AUTOMATION_CONFIRMED_ACTIONS = frozenset({"confirm", "approve", "delete"})
+
+
+@mcp.tool(
+    description=(
+        "Draft a recurring automation for the user (a scheduled report or request delivered to them, their team, "
+        "or their firm). This ONLY saves a proposal and returns a preview; it schedules nothing. Show the user the "
+        "preview (what, when with the next run times, who receives it) and ask them to confirm. Use this when the "
+        "user asks for something 'every Monday', 'each morning', 'monthly', or when they keep asking for the same "
+        "thing. Never use it for booking meetings or availability. "
+        "cadence: {frequency: hourly|daily|weekdays|weekly|monthly|once, hour 0-23, minute 0-59, "
+        "daysOfWeek [0=Monday..6=Sunday] for weekly, dayOfMonth 1-31 for monthly, runAt ISO date-time for once}. "
+        "scope_type: user (default, only the requester), team, legal_team, or firm. "
+        "kind 'report' needs report_id (management_digest, financial, workload, exceptions, unbilled, "
+        "profitability); kind 'agent_prompt' needs prompt (the request to run each time, written so it makes sense "
+        "with no conversation around it) and app_id (the workspace the user is in). A team or firm request runs "
+        "once per member, as that member, so each person's copy is built only from what they can already see - "
+        "word the prompt for 'my' data, not one person's. Scheduled runs are read-only."
+    )
+)
+async def propose_automation(
+    ctx: Context,
+    name: str,
+    cadence: dict,
+    kind: str = "agent_prompt",
+    prompt: str | None = None,
+    report_id: str | None = None,
+    scope_type: str = "user",
+    scope_id: str | None = None,
+    app_id: str | None = None,
+    time_zone: str | None = None,
+    delivery_channels: list[str] | None = None,
+    via: str | None = None,
+) -> dict:
+    """Save an automation proposal; the user must confirm before it runs."""
+    spec = {"reportId": report_id} if kind == "report" else {"prompt": prompt}
+    body = {
+        "name": name,
+        "kind": kind,
+        "spec": spec,
+        "cadence": cadence,
+        "scope": {"type": scope_type, "id": scope_id},
+        "appId": app_id,
+        "timezone": time_zone,
+        "delivery": {"channels": delivery_channels} if delivery_channels else None,
+        "via": via or "chat",
+    }
+    return await _post(ctx, "/api/core/automations", {k: v for k, v in body.items() if v is not None})
+
+
+@mcp.tool(
+    description=(
+        "List the user's automations: their own, plus team and firm automations that reach them, with status, "
+        "cadence, next run and last run. Optionally filter by scope_type (user, team, legal_team, firm)."
+    )
+)
+async def list_automations(ctx: Context, scope_type: str | None = None) -> dict:
+    return await _get(ctx, "/api/core/automations", {"scopeType": scope_type})
+
+
+@mcp.tool(
+    description=(
+        "List ready-made recurring automations that fit this user's role and workspace and that they do not "
+        "already have (for example a daily deadlines brief for an associate, a weekly management digest for a "
+        "partner). Use when the user asks what you can do for them regularly, what they could automate, or during "
+        "onboarding. Offer at most a few, in plain words; never set one up without asking."
+    )
+)
+async def suggest_automations(ctx: Context, app_id: str) -> dict:
+    return await _get(ctx, "/api/core/automations/templates", {"appId": app_id})
+
+
+@mcp.tool(
+    description=(
+        "Draft one of the templates returned by suggest_automations for the user. Like propose_automation, this "
+        "ONLY saves a proposal and returns a preview: show the preview and ask the user to confirm, then call "
+        "manage_automation(action=confirm). Pass the user's time_zone when you know it."
+    )
+)
+async def use_automation_template(
+    ctx: Context,
+    template_id: str,
+    app_id: str,
+    time_zone: str | None = None,
+    via: str | None = None,
+) -> dict:
+    """Turn a role template into a proposal; the user must confirm before it runs."""
+    body = {"appId": app_id, "timezone": time_zone, "via": via}
+    return await _post(
+        ctx,
+        f"/api/core/automations/templates/{quote(str(template_id), safe='')}/propose",
+        {k: v for k, v in body.items() if v is not None},
+    )
+
+
+@mcp.tool(
+    description=(
+        "Act on one automation by id. action: confirm (the user said yes to a proposal you showed them), approve "
+        "(an admin or manager signs off a team/firm automation awaiting approval), pause, resume, delete, or "
+        "mute / unmute (the user stops or restarts receiving a team or firm automation for themselves only; it "
+        "keeps running for everyone else). "
+        "confirm, approve and delete require user_confirmed=true, which you may set only after the user explicitly "
+        "agreed in this conversation to that exact automation. If the result status is pending_approval, tell the "
+        "user it is waiting for someone who manages that team or firm."
+    )
+)
+async def manage_automation(
+    ctx: Context,
+    automation_id: str,
+    action: str,
+    user_confirmed: bool = False,
+) -> dict:
+    """Confirm, approve, pause, resume or delete an automation."""
+    if action not in _AUTOMATION_ACTIONS:
+        return {"error": "invalid_automation_action", "allowedActions": list(_AUTOMATION_ACTIONS)}
+    if action in _AUTOMATION_CONFIRMED_ACTIONS and not user_confirmed:
+        return {
+            "error": "confirmation_required",
+            "message": f"Ask the user to explicitly confirm before you {action} this automation, then retry.",
+        }
+    path = f"/api/core/automations/{quote(str(automation_id), safe='')}"
+    if action == "delete":
+        return await _delete(ctx, path)
+    return await _post(ctx, f"{path}/{action}", {})
 
 
 @mcp.tool(

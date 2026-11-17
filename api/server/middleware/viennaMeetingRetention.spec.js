@@ -214,10 +214,7 @@ describe('Vienna meeting retention grant', () => {
   });
 
   test.each([
-    [
-      'wrong turn',
-      { metadata: { ...meetingBody().metadata, meetingTurnId: 'b'.repeat(64) } },
-    ],
+    ['wrong turn', { metadata: { ...meetingBody().metadata, meetingTurnId: 'b'.repeat(64) } }],
     [
       'wrong transcript revision',
       { metadata: { ...meetingBody().metadata, meetingTranscriptRevision: 'c'.repeat(64) } },

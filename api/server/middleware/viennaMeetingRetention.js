@@ -7,12 +7,30 @@ const RETENTION_PURPOSE = 'temporary_meeting_transcript';
 const MAX_GRANT_AGE_SECONDS = 5 * 60;
 const MAX_RETENTION_SECONDS = 24 * 60 * 60;
 const MEETING_TURN_BODY_FIELDS = new Set([
-  'input', 'conversationId', 'runId', 'channel', 'sessionKey', 'idempotencyKey',
-  'isTemporary', 'appId', 'caseId', 'metadata', 'stream',
+  'input',
+  'conversationId',
+  'runId',
+  'channel',
+  'sessionKey',
+  'idempotencyKey',
+  'isTemporary',
+  'appId',
+  'caseId',
+  'metadata',
+  'stream',
 ]);
-const MEETING_RESUME_BODY_FIELDS = new Set(['conversationId', 'actionId', 'agent_id', 'endpoint', 'decisions']);
+const MEETING_RESUME_BODY_FIELDS = new Set([
+  'conversationId',
+  'actionId',
+  'agent_id',
+  'endpoint',
+  'decisions',
+]);
 const MEETING_METADATA_FIELDS = new Set([
-  'meetingSessionId', 'meetingTurnId', 'meetingTranscriptRevision', 'source',
+  'meetingSessionId',
+  'meetingTurnId',
+  'meetingTranscriptRevision',
+  'source',
 ]);
 const MEETING_CHECKPOINT_COLLECTION = 'vienna_meeting_agent_checkpoints';
 const MEETING_CHECKPOINT_WRITES_COLLECTION = 'vienna_meeting_agent_checkpoint_writes';
@@ -77,9 +95,8 @@ function applyViennaMeetingRetention(request, response, next) {
   const isResumeRequest = request.path === '/resume';
   const allowedBodyFields = isResumeRequest ? MEETING_RESUME_BODY_FIELDS : MEETING_TURN_BODY_FIELDS;
   const hasUnexpectedBodyField = Object.keys(body).some((key) => !allowedBodyFields.has(key));
-  const hasUnexpectedMetadataField = !isResumeRequest && Object.keys(metadata).some(
-    (key) => !MEETING_METADATA_FIELDS.has(key),
-  );
+  const hasUnexpectedMetadataField =
+    !isResumeRequest && Object.keys(metadata).some((key) => !MEETING_METADATA_FIELDS.has(key));
   const issuedAt = Number(claims.iat);
   const expiresAt = Number(claims.exp);
   const retentionExpiresAt = Number(claims.retentionExpiresAt);
@@ -107,9 +124,13 @@ function applyViennaMeetingRetention(request, response, next) {
     (!isResumeRequest && String(metadata.meetingTurnId ?? '') !== turnId) ||
     (!isResumeRequest && !/^[0-9a-f]{64}$/.test(transcriptRevision)) ||
     (!isResumeRequest && String(metadata.meetingTranscriptRevision ?? '') !== transcriptRevision) ||
-    (!isResumeRequest && String(body.sessionKey ?? body.session_key ?? '') !== `meeting:${conversationId}`) ||
-    (!isResumeRequest && String(body.idempotencyKey ?? body.idempotency_key ?? '') !== `meeting:${turnId}`) ||
-    (isResumeRequest && (!/^[A-Za-z0-9._:-]{1,128}$/.test(approvalActionId) || String(body.actionId ?? '') !== approvalActionId)) ||
+    (!isResumeRequest &&
+      String(body.sessionKey ?? body.session_key ?? '') !== `meeting:${conversationId}`) ||
+    (!isResumeRequest &&
+      String(body.idempotencyKey ?? body.idempotency_key ?? '') !== `meeting:${turnId}`) ||
+    (isResumeRequest &&
+      (!/^[A-Za-z0-9._:-]{1,128}$/.test(approvalActionId) ||
+        String(body.actionId ?? '') !== approvalActionId)) ||
     !claims.appId ||
     (!isResumeRequest && String(claims.appId) !== appId) ||
     (!isResumeRequest && claimedCaseId !== caseId) ||

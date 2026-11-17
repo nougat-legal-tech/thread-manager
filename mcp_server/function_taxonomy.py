@@ -64,7 +64,7 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "scheduling",
         re.compile(
-            r"schedule|calendar|meeting|deadline|booking|slot|availability|event_type|reservation|conferencing|scheduling_link",
+            r"schedule|calendar|meeting|deadline|booking|slot|availability|event_type|reservation|conferencing|scheduling_link|automation",
             re.I,
         ),
     ),
