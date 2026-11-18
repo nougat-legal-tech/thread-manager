@@ -1356,6 +1356,21 @@ export const agentsEndpointSchema = baseEndpointSchema
       codeApiUploadConcurrency: z.number().int().min(1).max(100).optional().default(3),
       /** Maximum wall-clock time spent waiting on Code API rate limits per operation. */
       codeApiMaxRetryWaitMs: z.number().int().min(0).max(300_000).optional().default(20_000),
+      /**
+       * Per-run tool recovery budget. When enabled, a tool whose structured failure says a
+       * write may have landed is not sent again in that run, repairs and retries are capped,
+       * and an identical failed call is not repeated. Off by default: without it the model
+       * alone decides whether to re-call a failed tool.
+       */
+      toolRecovery: z
+        .object({
+          enabled: z.boolean().optional().default(false),
+          /** Extra attempts allowed after a failure the tool marked as repairable. */
+          maxRepairs: z.number().int().min(0).max(10).optional().default(2),
+          /** Failures in one run after which already-failed tools are refused. */
+          maxFailuresPerRun: z.number().int().min(1).max(50).optional().default(4),
+        })
+        .optional(),
       allowedProviders: z.array(z.union([z.string(), eModelEndpointSchema])).optional(),
       capabilities: z
         .array(z.nativeEnum(AgentCapabilities))

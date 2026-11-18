@@ -134,3 +134,42 @@ export function buildToolFailureEnvelope({
 export function formatToolFailure(envelope: ToolFailureEnvelope): string {
   return `${TOOL_FAILURE_MARKER}${JSON.stringify(envelope)}`;
 }
+
+export interface ParsedToolFailure {
+  /** What the failing tool said the caller may do next, when it said so. */
+  allowed?: ToolRecoveryStep;
+  /** `unknown` when a write may have taken effect. */
+  sideEffectState?: ToolSideEffectState;
+}
+
+const RECOVERY_STEPS = new Set<string>(['retry_once', 'repair', 'verify', 'ask_user', 'stop']);
+
+/**
+ * Reads the structured failure a tool appended to its error text, whichever
+ * surface produced it (the Django MCP sidecar or an HTTP Action). Returns
+ * `undefined` for text that carries none or carries one that does not parse.
+ */
+export function parseToolFailure(text: string | undefined): ParsedToolFailure | undefined {
+  const start = text?.lastIndexOf(TOOL_FAILURE_MARKER) ?? -1;
+  if (text == null || start < 0) {
+    return undefined;
+  }
+  const payload = text.slice(start + TOOL_FAILURE_MARKER.length).trim();
+  let envelope: { error?: { sideEffectState?: string }; recovery?: { allowed?: string } };
+  try {
+    envelope = JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+  if (envelope == null || typeof envelope !== 'object') {
+    return undefined;
+  }
+  const allowed = envelope.recovery?.allowed;
+  const sideEffectState = envelope.error?.sideEffectState;
+  return {
+    allowed:
+      allowed != null && RECOVERY_STEPS.has(allowed) ? (allowed as ToolRecoveryStep) : undefined,
+    sideEffectState:
+      sideEffectState === 'unknown' || sideEffectState === 'none' ? sideEffectState : undefined,
+  };
+}

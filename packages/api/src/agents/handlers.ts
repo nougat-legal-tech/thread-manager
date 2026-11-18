@@ -54,6 +54,7 @@ import type { BackgroundToolResultState } from './harvest';
 import type { CodeExecutionContext } from './execution';
 import type { TextContentFragment } from '~/protection';
 import type { RunFileSession } from './files/session';
+import type { ToolRecoveryGuard } from './recovery';
 import type { ServerRequest } from '~/types';
 import {
   backgroundTaskRegistry,
@@ -127,6 +128,7 @@ import { buildSkillPrimeMessage, isSkillFilePath, SKILL_FILE_PREFIX } from './sk
 import { resolveCallerCapabilityProjectionSnapshot } from './callerCapabilities';
 import { resolveAttachedWorkspaceQueueWaitMs } from '~/code/command';
 import { BACKGROUND_TOOL_INVOCATION_CONFIG_KEY } from './invocation';
+import { resolveToolRecoveryGuard, toolOutcome } from './recovery';
 import { mergeCodeFilesIntoContext } from './codeFilesSession';
 import { toolValidationFeedback } from './validationFeedback';
 import { createSkillContentDigest } from './compatibility';
@@ -5517,6 +5519,11 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
     persistToolCall,
   } = options;
 
+  /** One recovery budget for the whole run: this handler is created per request,
+   *  so the state spans every tool batch of the turn and nothing beyond it. */
+  let recoveryGuard: ToolRecoveryGuard | undefined;
+  let recoveryGuardResolved = false;
+
   const persistResult = async (input: PersistToolCallInput) => {
     if (!persistToolCall) {
       return;
@@ -5607,11 +5614,22 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
       /** Reports a settled result so the agent graph can emit that call's
        * completion immediately instead of waiting for the whole batch;
        * `resolve` below remains the authoritative batch outcome. */
+      const toolCallsById = new Map(toolCalls.map((tc) => [tc.id, tc]));
+      /** Calls the recovery budget refused; their own refusal is not a tool failure. */
+      const recoveryRefusedIds = new Set<string>();
       const reportResult = (result: ToolExecuteResult): ToolExecuteResult => {
         /* Every per-call return in the batch funnels through here, so this is
          * the one place that observes a `skill` call settling whatever path
          * produced its result, including the filtered and error paths. */
         skillFilesHandoff?.record(result);
+        const settledCall = toolCallsById.get(result.toolCallId);
+        if (
+          recoveryGuard != null &&
+          settledCall != null &&
+          !recoveryRefusedIds.has(result.toolCallId)
+        ) {
+          recoveryGuard.record(settledCall.name, settledCall.args, toolOutcome(result));
+        }
         try {
           onResult?.(result);
         } catch (callbackError) {
@@ -6684,6 +6702,12 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
             const batchCodeApiRateLimitBudget = createCodeApiRateLimitBudget(
               batchReq?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
             );
+            if (!recoveryGuardResolved) {
+              recoveryGuardResolved = true;
+              recoveryGuard = resolveToolRecoveryGuard(
+                batchReq?.config?.endpoints?.agents?.toolRecovery,
+              );
+            }
             const results: ToolExecuteResult[] = await Promise.all(
               toolCalls.map(async (tc: ToolCallRequest) => {
                 const preloadedNameBlock = preloadedNameBlocks.get(tc);
@@ -6701,6 +6725,11 @@ export function createToolExecuteHandler(options: ToolExecuteOptions): EventHand
                 );
                 if (filteredName != null) {
                   return reportResult(filteredName);
+                }
+                const recoveryRefusal = recoveryGuard?.block(tc.name, tc.args);
+                if (recoveryRefusal != null) {
+                  recoveryRefusedIds.add(tc.id);
+                  return reportResult(errorResult(tc, recoveryRefusal));
                 }
                 if (backgroundControlEnabled && tc.name === CHECK_BACKGROUND_TASK_NAME) {
                   const req = mergedConfigurable?.req as ServerRequest | undefined;

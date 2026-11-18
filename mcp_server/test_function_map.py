@@ -36,6 +36,25 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
 
+def test_case_task_aliases_use_verified_shared_operation_ids():
+    selected = asyncio.run(server.browse_function_map(object(), "case_management"))
+    records = {record["name"]: record for record in selected["functions"]}
+    expected = {
+        "assign_action_item": ("assign_case_action_item", "assign-action-item"),
+        "complete_action_item": ("complete_case_action_item", "complete-action-item"),
+        "create_action_item": ("create_case_action_item", "create-action-item"),
+        "update_action_item": ("update_case_action_item", "update-action-item"),
+        "list_action_items": ("retrieve_case_action_items", "list-action-items"),
+    }
+
+    for tool_name, (alias_name, operation_id) in expected.items():
+        alias = next(
+            item for item in records[tool_name]["callerAliases"] if item["name"] == alias_name
+        )
+        assert alias["operationId"] == operation_id
+        assert alias["verification"] == "verified_shared_operation_id"
+
+
 def test_financing_summary_map_exposes_case_scoped_document_reads():
     selected = asyncio.run(server.browse_function_map(object(), "documents_research"))
     rows = {record["name"]: record for record in selected["functions"]}

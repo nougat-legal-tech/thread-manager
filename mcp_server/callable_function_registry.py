@@ -1673,7 +1673,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "assign_case_action_item",
             "operationId": "assign-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
     ),
     "complete_action_item": (
@@ -1681,7 +1681,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "complete_case_action_item",
             "operationId": "complete-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
     ),
     "create_action_item": (
@@ -1689,7 +1689,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "create_case_action_item",
             "operationId": "create-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
     ),
     "generate_motion": (
@@ -1719,7 +1719,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "retrieve_case_action_items",
             "operationId": "list-action-items",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
         {
             "name": "retrieve_company_action_items",
@@ -1914,7 +1914,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "name": "update_case_action_item",
             "operationId": "update-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
-            "verification": "operation_id_match_only",
+            "verification": "verified_shared_operation_id",
         },
     ),
 }

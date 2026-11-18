@@ -19,6 +19,13 @@ endpoints:
     # the additional label work for long runs.
     activityLabel: true
     activityMaxPerRun: 6
+    # Enforce what a failed tool says may happen next: never re-send a write
+    # whose outcome is unknown, cap repairs and retries, and do not repeat an
+    # identical failed call. Without it the model alone decides.
+    toolRecovery:
+      enabled: true
+      maxRepairs: 2
+      maxFailuresPerRun: 4
 
 mcpSettings:
   allowedAddresses:
