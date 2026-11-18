@@ -75,6 +75,8 @@ mcp = FastMCP(
         "repair = fix the input and call again (at most twice); retry_once = one more attempt; "
         "verify = the write may have landed, so never re-send it, check with a read tool instead; "
         "ask_user = the user must act; stop = report the failure. "
+        "If recovery.alternates lists other tools, you may try one of them for the same question and must say "
+        "which source the answer came from. "
         "Always tell the user what failed and whether anything was changed."
     ),
 )
@@ -176,6 +178,39 @@ _retry_sleep = asyncio.sleep
 
 # What the calling agent may do next, by failure class (spec A3, rungs 2-5).
 # The caller enforces the budgets; this states what is allowed at all.
+# Other places to ask the same question when a read fails (spec A3, rung 3).
+# Keyed by the Django path the failed read called; first match wins. Every
+# entry is a document search, and each alternate is itself a read-only search
+# the caller is already allowed to run. ``search_documents`` (the firm's own
+# imported-document index) comes first because it needs no live connector.
+_ALTERNATE_READ_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "/api/core/integrations/netdocuments/search",
+        ("search_documents", "search_imanage_documents", "search_sharepoint_documents"),
+    ),
+    (
+        "/api/core/integrations/imanage/agent/documents/search",
+        ("search_documents", "search_netdocuments", "search_sharepoint_documents"),
+    ),
+    (
+        "/api/core/integrations/sharepoint/agent/documents/search",
+        ("search_documents", "search_imanage_documents", "search_netdocuments"),
+    ),
+    ("/api/core/integrations/relativity/documents/search", ("search_documents",)),
+    (
+        "/api/core/rag-query-proxy/",
+        ("search_imanage_documents", "search_netdocuments", "search_sharepoint_documents"),
+    ),
+)
+
+# POST endpoints that only read. Kept deliberately short: a path belongs here
+# only when it is certain the call stores nothing.
+_READ_ONLY_POST_PATHS = (
+    "/api/core/rag-query-proxy/",
+    "/api/core/integrations/relativity/documents/search",
+    "/api/core/integrations/relativity/documents/detail",
+)
+
 _RECOVERY_BY_CLASS = {
     "transient": ("retry_once", "The automatic retry also failed. Retry at most once more, then report."),
     "invalid_input": (
@@ -277,11 +312,14 @@ def _tool_failure_envelope(
     detail, code = _failure_detail_and_code(body)
     status = response.status_code if response is not None else None
 
+    # Some searches are sent as POST. They change nothing, so a timeout on one
+    # is a failed read (safe to retry), not a write of unknown outcome.
+    verb = "GET" if path.startswith(_READ_ONLY_POST_PATHS) else method
     if status is not None:
-        failure_class, side_effect_state = _http_failure_classification(method, status)
+        failure_class, side_effect_state = _http_failure_classification(verb, status)
     else:
         # Read timeout, dropped connection: the request left, the answer did not arrive.
-        failure_class, side_effect_state, detail = _transport_failure_classification(method, exc, detail)
+        failure_class, side_effect_state, detail = _transport_failure_classification(verb, exc, detail)
 
     failure_class, user_action = _failure_user_action(body, code, failure_class)
     if side_effect_state == "unknown":
@@ -302,8 +340,30 @@ def _tool_failure_envelope(
             "method": method.upper(),
             "path": path,
         },
-        "recovery": dict(zip(("allowed", "guidance"), _RECOVERY_BY_CLASS[failure_class], strict=True)),
+        "recovery": _recovery_for(failure_class, path, side_effect_state),
     }
+
+
+def _recovery_for(failure_class: str, path: str, side_effect_state: str) -> dict[str, Any]:
+    """What the caller may do next, plus other sources to try when a read failed."""
+    recovery: dict[str, Any] = dict(
+        zip(("allowed", "guidance"), _RECOVERY_BY_CLASS[failure_class], strict=True)
+    )
+    # Alternates are for reads only: the same question asked of another
+    # source. A failed write is never redirected to a different system.
+    if side_effect_state != "none" or failure_class == "needs_confirmation":
+        return recovery
+    alternates = next(
+        (tools for prefix, tools in _ALTERNATE_READ_SOURCES if path.startswith(prefix)),
+        None,
+    )
+    if alternates:
+        recovery["alternates"] = list(alternates)
+        recovery["guidance"] += (
+            " The same information may be available from another source: you may try ONE of "
+            f"{', '.join(alternates)} instead, and say which source the answer came from."
+        )
+    return recovery
 
 
 def _tool_failure_message(summary: str, envelope: dict[str, Any]) -> str:
@@ -966,7 +1026,12 @@ async def generate_meeting_prep(
     data = response.get("data") if isinstance(response, dict) else None
     mutation = data.get("generateMeetingPrep") if isinstance(data, dict) else None
     meeting_prep = mutation.get("meetingPrep") if isinstance(mutation, dict) else None
-    if not isinstance(meeting_prep, dict) or not meeting_prep.get("summary"):
+    status = str((meeting_prep or {}).get("status") or "").strip().lower()
+    if (
+        not isinstance(meeting_prep, dict)
+        or not meeting_prep.get("summary")
+        or (status and status not in {"generated", "sending", "sent"})
+    ):
         return {"success": False, "error": "No meeting brief was returned. Please retry."}
     return {"success": True, "meetingPrep": meeting_prep}
 

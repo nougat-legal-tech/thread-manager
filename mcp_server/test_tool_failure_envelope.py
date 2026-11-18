@@ -65,9 +65,7 @@ def _client_returning(monkeypatch, *outcomes):
 
 
 def _response(method: str, status: int, **kwargs) -> httpx.Response:
-    return httpx.Response(
-        status, request=httpx.Request(method, f"{_BASE}/api/core/thing/"), **kwargs
-    )
+    return httpx.Response(status, request=httpx.Request(method, f"{_BASE}/api/core/thing/"), **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -81,9 +79,7 @@ def _response(method: str, status: int, **kwargs) -> httpx.Response:
         (422, "invalid_input", None),
     ],
 )
-def test_refused_write_is_classified_and_proven_side_effect_free(
-    monkeypatch, status, expected_class, user_action
-):
+def test_refused_write_is_classified_and_proven_side_effect_free(monkeypatch, status, expected_class, user_action):
     _client_returning(monkeypatch, _response("POST", status, json={"detail": "Nope."}))
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
@@ -112,12 +108,8 @@ def test_failed_read_is_never_an_unknown_outcome(monkeypatch):
 
 
 @pytest.mark.parametrize("helper", ["_post", "_patch"])
-def test_server_error_on_a_write_is_an_unknown_outcome_and_not_retryable(
-    monkeypatch, helper
-):
-    _client_returning(
-        monkeypatch, _response("POST", 502, json={"detail": "Bad gateway"})
-    )
+def test_server_error_on_a_write_is_an_unknown_outcome_and_not_retryable(monkeypatch, helper):
+    _client_returning(monkeypatch, _response("POST", 502, json={"detail": "Bad gateway"}))
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
         _run(getattr(server, helper)(object(), "/api/core/thing/", {}))
@@ -131,9 +123,7 @@ def test_server_error_on_a_write_is_an_unknown_outcome_and_not_retryable(
 def test_rate_limit_is_transient_with_retry_after(monkeypatch):
     _client_returning(
         monkeypatch,
-        _response(
-            "POST", 429, json={"detail": "Slow down"}, headers={"Retry-After": "12"}
-        ),
+        _response("POST", 429, json={"detail": "Slow down"}, headers={"Retry-After": "12"}),
     )
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
@@ -213,9 +203,7 @@ def test_body_codes_override_the_status_class(monkeypatch):
 
 
 def test_prose_summary_still_leads_and_keeps_the_original_response(monkeypatch):
-    response = _response(
-        "GET", 400, json={"detail": "Connect DocuSign from Connections first."}
-    )
+    response = _response("GET", 400, json={"detail": "Connect DocuSign from Connections first."})
     _client_returning(monkeypatch, response)
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
@@ -226,14 +214,10 @@ def test_prose_summary_still_leads_and_keeps_the_original_response(monkeypatch):
     assert raised.value.response is response
 
 
-def test_every_failure_is_logged_once_without_detail_or_resource_ids(
-    monkeypatch, caplog
-):
+def test_every_failure_is_logged_once_without_detail_or_resource_ids(monkeypatch, caplog):
     _client_returning(
         monkeypatch,
-        _response(
-            "POST", 403, json={"detail": "Matter 'Rivera v. Acme' is restricted."}
-        ),
+        _response("POST", 403, json={"detail": "Matter 'Rivera v. Acme' is restricted."}),
     )
 
     with (
@@ -242,11 +226,7 @@ def test_every_failure_is_logged_once_without_detail_or_resource_ids(
     ):
         _run(server._post(object(), "/api/core/cases/Rivera-Case-42/thing/", {}))  # noqa: SLF001
 
-    records = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "juristai.mcp.tool_failure"
-    ]
+    records = [record.getMessage() for record in caplog.records if record.name == "juristai.mcp.tool_failure"]
     assert len(records) == 1
     assert "class=permission_denied" in records[0]
     assert "status=403" in records[0]
@@ -271,9 +251,7 @@ def test_transient_read_failure_is_retried_once_and_can_succeed(monkeypatch):
 
 
 def test_retry_is_bounded_and_the_envelope_reports_the_attempts(monkeypatch):
-    sends, _waits = _client_returning(
-        monkeypatch, _response("GET", 503, json={"detail": "busy"})
-    )
+    sends, _waits = _client_returning(monkeypatch, _response("GET", 503, json={"detail": "busy"}))
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
         _run(server._get(object(), "/api/core/thing/"))  # noqa: SLF001
@@ -326,9 +304,7 @@ def test_retry_after_is_honoured_when_short_and_skipped_when_long(monkeypatch):
     assert _run(server._get(object(), "/api/core/thing/")) == {"ok": True}  # noqa: SLF001
     assert (len(sends), waits) == (_SENDS_WITH_ONE_RETRY, [2.0])
 
-    sends, waits = _client_returning(
-        monkeypatch, _response("GET", 429, headers={"Retry-After": "120"})
-    )
+    sends, waits = _client_returning(monkeypatch, _response("GET", 429, headers={"Retry-After": "120"}))
     with pytest.raises(httpx.HTTPStatusError):
         _run(server._get(object(), "/api/core/thing/"))  # noqa: SLF001
     assert (len(sends), waits) == (1, [])
@@ -344,9 +320,7 @@ def test_non_transient_failures_are_not_retried_and_carry_their_next_step(monkey
         500: "stop",
     }
     for status, allowed in expected.items():
-        sends, _waits = _client_returning(
-            monkeypatch, _response("GET", status, json={"detail": "x"})
-        )
+        sends, _waits = _client_returning(monkeypatch, _response("GET", status, json={"detail": "x"}))
         with pytest.raises(httpx.HTTPStatusError) as raised:
             _run(server._get(object(), "/api/core/thing/"))  # noqa: SLF001
         assert len(sends) == 1, status
@@ -375,3 +349,92 @@ def test_every_failure_class_has_recovery_guidance():
         "internal",
     }
     assert set(server._RECOVERY_BY_CLASS) == classes  # noqa: SLF001
+
+
+# --- Alternate sources for failed reads (spec A3, rung 3) ---------------------
+
+_IMANAGE_SEARCH = "/api/core/integrations/imanage/agent/documents/search"
+
+
+def test_a_failed_document_search_names_other_sources_to_try(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 400, json={"detail": "Connect iManage first."}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), _IMANAGE_SEARCH))  # noqa: SLF001
+
+    recovery = _envelope(raised.value)["recovery"]
+    assert recovery["alternates"] == [
+        "search_documents",
+        "search_netdocuments",
+        "search_sharepoint_documents",
+    ]
+    assert "you may try ONE of search_documents" in recovery["guidance"]
+    assert "say which source" in recovery["guidance"]
+
+
+def test_alternates_are_offered_after_the_automatic_retry_also_fails(monkeypatch):
+    sends, _waits = _client_returning(monkeypatch, _response("GET", 503, json={"detail": "busy"}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), _IMANAGE_SEARCH))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert len(sends) == _SENDS_WITH_ONE_RETRY
+    assert envelope["recovery"]["allowed"] == "retry_once"
+    assert envelope["recovery"]["alternates"][0] == "search_documents"
+
+
+def test_reads_with_no_equivalent_source_and_all_writes_get_no_alternates(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
+    with pytest.raises(httpx.HTTPStatusError) as plain_read:
+        _run(server._get(object(), "/api/core/integrations/clio/matters/"))  # noqa: SLF001
+
+    _client_returning(monkeypatch, _response("POST", 400, json={"detail": "bad"}))
+    with pytest.raises(httpx.HTTPStatusError) as write:
+        _run(server._post(object(), "/api/core/add-case/", {}))  # noqa: SLF001
+
+    assert "alternates" not in _envelope(plain_read.value)["recovery"]
+    assert "alternates" not in _envelope(write.value)["recovery"]
+
+
+def test_a_search_sent_as_post_is_a_read_not_a_write_of_unknown_outcome(monkeypatch):
+    sends, _waits = _client_returning(
+        monkeypatch,
+        httpx.ReadTimeout("timed out"),
+        _response("POST", 200, json={"results": []}),
+    )
+    assert _run(server._post(object(), "/api/rag-query-proxy/", {})) == {"results": []}  # noqa: SLF001
+    assert len(sends) == _SENDS_WITH_ONE_RETRY
+
+    _client_returning(monkeypatch, _response("POST", 502, json={"detail": "Bad gateway"}))
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._post(object(), "/api/rag-query-proxy/", {}))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert envelope["error"]["class"] == "transient"
+    assert envelope["error"]["sideEffectState"] == "none"
+    assert envelope["error"]["method"] == "POST"
+    assert envelope["recovery"]["alternates"] == [
+        "search_imanage_documents",
+        "search_netdocuments",
+        "search_sharepoint_documents",
+    ]
+
+
+def test_every_alternate_is_a_real_read_only_search_tool_and_never_itself():
+    source_tool_by_prefix = {
+        "/api/core/integrations/netdocuments/search": "search_netdocuments",
+        "/api/core/integrations/imanage/agent/documents/search": "search_imanage_documents",
+        "/api/core/integrations/sharepoint/agent/documents/search": "search_sharepoint_documents",
+        "/api/core/integrations/relativity/documents/search": "search_relativity_documents",
+        "/api/core/rag-query-proxy/": "search_documents",
+    }
+    assert {prefix for prefix, _tools in server._ALTERNATE_READ_SOURCES} == set(  # noqa: SLF001
+        source_tool_by_prefix
+    )
+    for prefix, tools in server._ALTERNATE_READ_SOURCES:  # noqa: SLF001
+        assert tools
+        assert source_tool_by_prefix[prefix] not in tools
+        for tool in tools:
+            assert callable(getattr(server, tool)), tool
+            assert tool.startswith("search_"), tool

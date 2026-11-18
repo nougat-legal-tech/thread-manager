@@ -329,9 +329,15 @@ _CHAT_RUN_TOOL_GUIDANCE = [
         ],
         "requiredInputs": ["operation"],
         "mutatesState": True,
+        # Not an MCP tool. ChatProxy orchestrates it from integrations_admin
+        # (list_organization_members). Live 2026-11-17: "who are the members of
+        # my organization" ended as caller_alias_unverified with no answer.
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
         "invocationGuidance": (
-            "Use operation=list_members to list members, operation=get_approval_policy to read the policy, "
-            "or operation=update_approval_policy with approvalPolicy and explicit confirmation to change it."
+            "To list members, call list_organization_members from the integrations_admin category and report only "
+            "the returned names, emails, and roles. Approval-policy reads and changes are not available here; say so "
+            "instead of guessing."
         ),
     },
     {
@@ -828,11 +834,13 @@ _CHAT_PROXY_ONLY_FUNCTION_RECORDS = [
         "name": "map_inbox_review_thread",
         "operationIds": ["map-inbox-review-thread"],
         "description": "Assign a reviewed inbox thread to a case after explicit confirmation.",
-        "requiredInputs": ["caseId", "integrationId", "providerThreadId", "confirm"],
+        "requiredInputs": ["caseId", "confirm"],
         "mutatesState": True,
         "requiresExplicitConfirmation": True,
         "invocationGuidance": (
-            "Identify the exact provider thread and destination case before asking the " "user to confirm the mapping."
+            "Use sender, subject, or date details to identify the reviewed inbox thread. If multiple "
+            "threads match, ask the user to choose from the returned candidates; keep provider IDs "
+            "internal and require explicit confirmation before mapping."
         ),
         "surfaces": ["chat_proxy"],
         "metadataStatus": "chat_proxy_only",
@@ -1118,7 +1126,9 @@ MCP_FUNCTION_METADATA["propose_automation"] = {
         "Use when the user asks for something on a schedule (every Monday, each morning, monthly) or keeps "
         "asking for the same thing. This only saves a draft: show the returned preview (what, when, next run "
         "times, who receives it) and ask the user to confirm. Never claim it is scheduled until "
-        "manage_automation(action=confirm) returns status active. Not for meeting booking or availability."
+        "manage_automation(action=confirm) returns status active. Default action_policy is read_only. Use "
+        "task_execution only when the user explicitly requests personal scheduled task work; team and firm "
+        "task execution is unsupported. Not for meeting booking or availability."
     ),
 }
 MCP_FUNCTION_METADATA["list_automations"] = {
@@ -1190,6 +1200,10 @@ MCP_FUNCTION_METADATA["manage_workflow_action"] = {
         "generate_safe",
         "generate_financing_doc",
         "generate_board_consent",
+        "document_amendment_request",
+        "seriesai.document.amend",
+        "document_generation_request",
+        "seriesai.cap_table.issuance.documents.generate",
         "add_cap_table_entry",
         "update_cap_table_entry",
     ],
@@ -1966,20 +1980,6 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ("intent_handler",),
     ),
     (
-        "document_amendment_request",
-        "documents_research",
-        "Amend an existing Vienna corporate document, such as adding a cofounder or authorizing shares.",
-        ("3", "4"),
-        ("intent_handler",),
-    ),
-    (
-        "document_generation_request",
-        "documents_research",
-        "Review an existing Vienna cap-table document workflow; starting financing documents uses a dedicated action.",
-        ("3", "4"),
-        ("intent_handler",),
-    ),
-    (
         "draft_followups",
         "communications",
         "Draft unsent email follow-ups from sent-mail history without sending messages or booking meetings.",
@@ -2183,6 +2183,53 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "name": "update_cap_table_entry",
         "categoryId": "company_operations",
         "description": "Update a legacy company cap-table entry by its existing entry identifier.",
+    },
+    {
+        "functionId": "document_amendment_request",
+        "name": "document_amendment_request",
+        "categoryId": "documents_research",
+        "description": "Preview and generate an amendment to an existing Vienna corporate document.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["contracts_workflows"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Use list_seriesai_document_amendments to identify the "
+            "supported amendment and source document. Then create a scoped workflow run and propose "
+            "seriesai.document.amend through manage_workflow_action using the trusted organizationId/appId and "
+            "the selected amendmentKind, sourceRunId or sourceTemplateId, supplied answers, and formats. Show "
+            "the server preview and wait for explicit user approval before approving and executing that exact "
+            "proposal. Do not edit signed documents in place or claim the cap table changed."
+        ),
+    },
+    {
+        "functionId": "document_generation_request",
+        "name": "document_generation_request",
+        "categoryId": "documents_research",
+        "description": "Review and generate documents for an existing Vienna issuance workflow.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["company_operations", "contracts_workflows"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Use the authenticated company_operations category to "
+            "find the existing issuance workflow with list_seriesai_issuance_workflows when workflowId was not "
+            "supplied. Create a scoped shared workflow run and propose "
+            "seriesai.cap_table.issuance.documents.generate through manage_workflow_action, using the trusted "
+            "organizationId/appId and selected workflowId. Show the server preview and wait for explicit user "
+            "approval before approving and executing that exact proposal. If documents already exist or the "
+            "workflow has no templates, report that state instead of regenerating or inventing documents."
+        ),
     },
     {
         "functionId": "round_status_query",

@@ -12,7 +12,7 @@
 # Error details
 
 ```
-Error: browserType.launch: Executable doesn't exist at C:\Users\aibns\AppData\Local\ms-playwright\chromium_headless_shell-1234\chrome-headless-shell-win64\chrome-headless-shell.exe
+Error: browserType.launch: Executable doesn't exist at C:\Users\aibns\AppData\Local\Packages\openai.codex_2p2nqsd0c76g0\AC\#!sandbox.{c9f9c1bb-3967-452a-8444-484f52c1fff0}\ms-playwright\chromium_headless_shell-1234\chrome-headless-shell-win64\chrome-headless-shell.exe
 ╔════════════════════════════════════════════════════════════╗
 ║ Looks like Playwright was just installed or updated.       ║
 ║ Please run the following command to download new browsers: ║

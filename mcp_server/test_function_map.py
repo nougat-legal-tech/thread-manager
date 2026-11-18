@@ -76,6 +76,24 @@ def test_financing_summary_map_exposes_case_scoped_document_reads():
     assert rows["send_uploaded_documents"]["mutatesState"] is True
 
 
+def test_document_amendment_alias_navigates_to_shared_approval_workflow():
+    selected = asyncio.run(server.browse_function_map(object(), "documents_research"))
+    records = {item["name"]: item for item in selected["functions"]}
+    amendment = records["document_amendment_request"]
+    generation = records["document_generation_request"]
+
+    assert amendment["mcpCallable"] is False
+    assert amendment["metadataStatus"] == "chat_proxy_orchestration"
+    assert amendment["requiresExplicitConfirmation"] is True
+    assert amendment["orchestrationCategoryIds"] == ["contracts_workflows"]
+    assert "seriesai.document.amend" in amendment["invocationGuidance"]
+    assert generation["mcpCallable"] is False
+    assert generation["metadataStatus"] == "chat_proxy_orchestration"
+    assert generation["requiresExplicitConfirmation"] is True
+    assert generation["orchestrationCategoryIds"] == ["company_operations", "contracts_workflows"]
+    assert "seriesai.cap_table.issuance.documents.generate" in generation["invocationGuidance"]
+
+
 def test_case_signature_map_entry_is_read_only_and_uses_trusted_scope():
     selected = asyncio.run(server.browse_function_map(object(), "signatures_approvals"))
     record = next(item for item in selected["functions"] if item["name"] == "list_case_signatures")
@@ -655,3 +673,12 @@ def test_deadline_acknowledgment_forwards_approval_to_shared_edit_api(monkeypatc
             },
         )
     ]
+
+
+def test_inbox_mapping_guidance_keeps_provider_ids_internal():
+    records = server.universal_function_records()
+    record = next(item for item in records if item["name"] == "map_inbox_review_thread")
+
+    assert record["requiredInputs"] == ["caseId", "confirm"]
+    assert "sender, subject, or date" in record["invocationGuidance"]
+    assert "keep provider IDs internal" in record["invocationGuidance"]

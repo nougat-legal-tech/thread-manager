@@ -155,11 +155,7 @@ def test_suggesting_templates_reads_the_role_catalogue(calls):
 
 
 def test_using_a_template_only_drafts_it(calls):
-    _run(
-        server.use_automation_template(
-            object(), template_id="daily/brief", app_id="2", time_zone="America/New_York"
-        )
-    )
+    _run(server.use_automation_template(object(), template_id="daily/brief", app_id="2", time_zone="America/New_York"))
 
     assert calls == [
         (
