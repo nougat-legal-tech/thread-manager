@@ -15,6 +15,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const mockInitializeAgent = jest.fn();
 const mockValidateAgentModel = jest.fn();
 const mockGetAppConfig = jest.fn();
+const mockAssertMeetingToolsAuthorized = jest.fn().mockResolvedValue(undefined);
 jest.mock('~/server/services/Config', () => ({
   ...jest.requireActual('~/server/services/Config'),
   getAppConfig: (...args) => mockGetAppConfig(...args),
@@ -40,6 +41,7 @@ jest.mock('@librechat/api', () => ({
   ...jest.requireActual('@librechat/api'),
   initializeAgent: (...args) => mockInitializeAgent(...args),
   validateAgentModel: (...args) => mockValidateAgentModel(...args),
+  assertMeetingToolsAuthorized: (...args) => mockAssertMeetingToolsAuthorized(...args),
   GenerationJobManager: { setCollectedUsage: jest.fn() },
   getCustomEndpointConfig: jest.fn(),
   createSequentialChainEdges: jest.fn(),
@@ -830,6 +832,7 @@ describe('initializeClient — subagent loading', () => {
     capturedToolExecuteOptions = undefined;
     mockLoadToolsForExecution.mockReset();
     mockLoadToolsForExecution.mockResolvedValue({ loadedTools: [], configurable: {} });
+    mockAssertMeetingToolsAuthorized.mockReset().mockResolvedValue(undefined);
     mockGetAccessibleMcpServerNames.mockReset();
     mockGetAccessibleMcpServerNames.mockResolvedValue([]);
 
@@ -1971,6 +1974,40 @@ describe('initializeClient — subagent loading', () => {
     expect(mockLoadToolsForExecution).toHaveBeenCalledWith(
       expect.objectContaining({ mcpAvailableTools }),
     );
+  });
+
+  it('rechecks Django meeting authority before loading tools', async () => {
+    const order = [];
+    mockAssertMeetingToolsAuthorized.mockImplementation(async () => {
+      order.push('authorize');
+    });
+    mockLoadToolsForExecution.mockImplementation(async () => {
+      order.push('load');
+      return { loadedTools: [], configurable: {} };
+    });
+    mockInitializeAgent.mockResolvedValue(makePrimaryConfig({}));
+
+    const req = makeSubagentReq();
+    req.get = jest.fn((header) =>
+      header.toLowerCase() === 'x-vienna-meeting-retention' ? 'signed-meeting-grant' : undefined,
+    );
+    await initializeClient({
+      req,
+      res: {},
+      signal: new AbortController().signal,
+      endpointOption: makeEndpointOption(),
+    });
+
+    await capturedToolExecuteOptions.loadTools(['web'], PRIMARY_ID);
+
+    expect(mockAssertMeetingToolsAuthorized).toHaveBeenCalledWith({
+      baseUrl: process.env.DJANGO_API_BASE_URL,
+      retentionGrant: 'signed-meeting-grant',
+      sessionId: 'conv_sub',
+      toolNames: ['web'],
+      fetcher: globalThis.fetch,
+    });
+    expect(order).toEqual(['authorize', 'load']);
   });
 
   it('deduplicates repeated ids in subagents.agent_ids', async () => {

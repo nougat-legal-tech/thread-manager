@@ -1200,6 +1200,8 @@ MCP_FUNCTION_METADATA["manage_workflow_action"] = {
         "generate_safe",
         "generate_financing_doc",
         "generate_board_consent",
+        "cap_table_issuance_intent",
+        "seriesai.cap_table.issuance.start",
         "document_amendment_request",
         "seriesai.document.amend",
         "document_generation_request",
@@ -1945,13 +1947,6 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ("intent_handler",),
     ),
     (
-        "cap_table_issuance_intent",
-        "company_operations",
-        "Record a proposed share issuance for a Vienna company; approval is required before committing it.",
-        ("3", "4"),
-        ("intent_handler",),
-    ),
-    (
         "delete_case_email_message",
         "communications",
         "Remove one named email from a case record.",
@@ -2173,6 +2168,31 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
 
 _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
     {
+        "functionId": "cap_table_issuance_intent",
+        "name": "cap_table_issuance_intent",
+        "categoryId": "company_operations",
+        "description": "Prepare a proposed share-issuance workflow for a Vienna company.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["contracts_workflows"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Use AI to extract the recipient name and category, share "
+            "class, number of shares, price per share, effective date, vesting or restrictions, and approving "
+            "board or stockholder action. Ask for any missing terms before proposing a workflow. Then create a "
+            "scoped shared workflow run and propose seriesai.cap_table.issuance.start through "
+            "manage_workflow_action with the trusted organizationId/appId, recipient fields, and transactionDraft. "
+            "Show the complete server preview and wait for explicit user approval before approving and executing "
+            "that exact proposal. Starting this workflow does not commit an ownership change; later workflow "
+            "review and commit remain separately approval-gated."
+        ),
+    },
+    {
         "functionId": "add_cap_table_entry",
         "name": "add_cap_table_entry",
         "categoryId": "company_operations",
@@ -2198,6 +2218,7 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "mutatesState": True,
         "requiresExplicitConfirmation": True,
         "orchestrationCategoryIds": ["contracts_workflows"],
+        "orchestrationMutationToolNames": ["create_workflow_run", "manage_workflow_action"],
         "invocationGuidance": (
             "This request is routed through ChatProxy. Use list_seriesai_document_amendments to identify the "
             "supported amendment and source document. Then create a scoped workflow run and propose "
@@ -2221,6 +2242,7 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "mutatesState": True,
         "requiresExplicitConfirmation": True,
         "orchestrationCategoryIds": ["company_operations", "contracts_workflows"],
+        "orchestrationMutationToolNames": ["create_workflow_run", "manage_workflow_action"],
         "invocationGuidance": (
             "This request is routed through ChatProxy. Use the authenticated company_operations category to "
             "find the existing issuance workflow with list_seriesai_issuance_workflows when workflowId was not "

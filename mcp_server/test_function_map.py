@@ -86,11 +86,13 @@ def test_document_amendment_alias_navigates_to_shared_approval_workflow():
     assert amendment["metadataStatus"] == "chat_proxy_orchestration"
     assert amendment["requiresExplicitConfirmation"] is True
     assert amendment["orchestrationCategoryIds"] == ["contracts_workflows"]
+    assert amendment["orchestrationMutationToolNames"] == ["create_workflow_run", "manage_workflow_action"]
     assert "seriesai.document.amend" in amendment["invocationGuidance"]
     assert generation["mcpCallable"] is False
     assert generation["metadataStatus"] == "chat_proxy_orchestration"
     assert generation["requiresExplicitConfirmation"] is True
     assert generation["orchestrationCategoryIds"] == ["company_operations", "contracts_workflows"]
+    assert generation["orchestrationMutationToolNames"] == ["create_workflow_run", "manage_workflow_action"]
     assert "seriesai.cap_table.issuance.documents.generate" in generation["invocationGuidance"]
 
 
@@ -195,6 +197,34 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
         asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve-all"))
 
 
+@pytest.mark.parametrize("action_policy", ["read_only", "task_execution"])
+def test_propose_automation_carries_explicit_action_policy(monkeypatch, action_policy):
+    calls = []
+
+    async def fake_post(ctx, path, body):
+        calls.append((ctx, path, body))
+        return {"automation": {"actionPolicy": body["actionPolicy"]}}
+
+    monkeypatch.setattr(server, "_post", fake_post)
+    ctx = object()
+    result = asyncio.run(
+        server.propose_automation(
+            ctx,
+            name="Work through my tasks",
+            cadence={"frequency": "weekly", "hour": 8, "minute": 0, "daysOfWeek": [0]},
+            prompt="Complete actionable tasks assigned to me.",
+            app_id="2",
+            action_policy=action_policy,
+        )
+    )
+
+    assert calls[0][1] == "/api/core/automations"
+    assert calls[0][2]["actionPolicy"] == action_policy
+    assert result["automation"]["actionPolicy"] == action_policy
+    tool = next(item for item in server.mcp._tool_manager.list_tools() if item.name == "propose_automation")
+    assert tool.parameters["properties"]["action_policy"]["default"] == "read_only"
+
+
 def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     index = asyncio.run(server.browse_function_map(object()))
     registered_tools = server.mcp._tool_manager.list_tools()
@@ -209,6 +239,14 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         "generate_safe",
         "generate_financing_doc",
         "generate_board_consent",
+        "cap_table_issuance_intent",
+        "seriesai.cap_table.issuance.start",
+        "request_signature",
+        "seriesai.signature.create",
+        "document_amendment_request",
+        "seriesai.document.amend",
+        "document_generation_request",
+        "seriesai.cap_table.issuance.documents.generate",
         "add_cap_table_entry",
         "update_cap_table_entry",
     ]
@@ -393,7 +431,6 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
             "update_case_individual",
         },
         "signatures_approvals": {
-            "request_signature",
             "safe_review_approval",
             "signature_approval",
         },
@@ -505,6 +542,35 @@ def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
     assert rows["diligence_room_query"]["mcpCallable"] is False
     assert rows["diligence_room_query"]["metadataStatus"] == "chat_proxy_orchestration"
     assert "advance_lifecycle_stage" not in rows
+
+
+def test_cap_table_issuance_is_navigable_as_shared_workflow_orchestration():
+    selected = asyncio.run(
+        server.browse_function_map(object(), "company_operations", ["cap_table_issuance_intent"])
+    )
+    record = next(item for item in selected["functions"] if item.get("name") == "cap_table_issuance_intent")
+
+    assert record["appIds"] == ["3", "4"]
+    assert record["mcpCallable"] is False
+    assert record["metadataStatus"] == "chat_proxy_orchestration"
+    assert record["requiresExplicitConfirmation"] is True
+    assert "contracts_workflows" in record["orchestrationCategoryIds"]
+    assert "seriesai.cap_table.issuance.start" in record["invocationGuidance"]
+
+
+def test_signature_request_is_navigable_as_shared_workflow_orchestration():
+    selected = asyncio.run(
+        server.browse_function_map(object(), "signatures_approvals", ["request_signature"])
+    )
+    record = next(item for item in selected["functions"] if item.get("name") == "request_signature")
+
+    assert record["appIds"] == ["3", "4"]
+    assert record["mcpCallable"] is False
+    assert record["metadataStatus"] == "chat_proxy_orchestration"
+    assert record["requiresExplicitConfirmation"] is True
+    assert "contracts_workflows" in record["orchestrationCategoryIds"]
+    assert "seriesai.signature.create" in record["invocationGuidance"]
+    assert "signatureRecipients to signers" in record["invocationGuidance"]
 
 
 def test_lifecycle_classifier_is_in_documents_research_and_requires_approval(monkeypatch):

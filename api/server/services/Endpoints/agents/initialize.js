@@ -41,6 +41,7 @@ const {
   encodeAndFormatVideos,
   extractFileContext,
   createScheduleUpstreamTokenProviderResolver,
+  assertMeetingToolsAuthorized,
 } = require('@librechat/api');
 const {
   ResourceType,
@@ -454,6 +455,14 @@ const initializeClientWithProvider = async ({
       runSignal,
       executionContext,
     ) => {
+      await assertMeetingToolsAuthorized({
+        baseUrl: process.env.DJANGO_API_BASE_URL,
+        retentionGrant: req.get?.('x-vienna-meeting-retention'),
+        sessionId: conversationId,
+        toolNames,
+        fetcher: globalThis.fetch,
+      });
+
       const ctx = runFileBindings.getContext(agentId, executionContext) ?? {};
       logger.debug(`[ON_TOOL_EXECUTE] ctx found: ${!!ctx.userMCPAuthMap}, agent: ${ctx.agent?.id}`);
       logger.debug(`[ON_TOOL_EXECUTE] toolRegistry size: ${ctx.toolRegistry?.size ?? 'undefined'}`);

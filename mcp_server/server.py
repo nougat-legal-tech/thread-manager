@@ -5407,7 +5407,10 @@ _AUTOMATION_CONFIRMED_ACTIONS = frozenset({"confirm", "approve", "delete"})
         "profitability); kind 'agent_prompt' needs prompt (the request to run each time, written so it makes sense "
         "with no conversation around it) and app_id (the workspace the user is in). A team or firm request runs "
         "once per member, as that member, so each person's copy is built only from what they can already see - "
-        "word the prompt for 'my' data, not one person's. Scheduled runs are read-only."
+        "word the prompt for 'my' data, not one person's. action_policy defaults to read_only. Set it to "
+        "task_execution only when the user explicitly asks Vienna to work through tasks; that option is limited "
+        "to a personal agent_prompt and permits only safe single-task updates. Always show the preview and ask "
+        "the user to confirm before activation."
     )
 )
 async def propose_automation(
@@ -5422,6 +5425,7 @@ async def propose_automation(
     app_id: str | None = None,
     time_zone: str | None = None,
     delivery_channels: list[str] | None = None,
+    action_policy: str = "read_only",
     via: str | None = None,
 ) -> dict:
     """Save an automation proposal; the user must confirm before it runs."""
@@ -5435,6 +5439,7 @@ async def propose_automation(
         "appId": app_id,
         "timezone": time_zone,
         "delivery": {"channels": delivery_channels} if delivery_channels else None,
+        "actionPolicy": action_policy,
         "via": via or "chat",
     }
     return await _post(ctx, "/api/core/automations", {k: v for k, v in body.items() if v is not None})
