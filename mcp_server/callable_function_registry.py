@@ -1565,6 +1565,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "surfaces": ["intent_handler", "chat_proxy"],
             "verification": "verified_contract_mapping",
             "appIds": ["3", "4"],
+            "mutatesState": False,
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
             "invocationGuidance": (
@@ -1649,6 +1650,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "surfaces": ["intent_handler", "chat_proxy"],
             "verification": "verified_contract_mapping",
             "appIds": ["3", "4"],
+            "mutatesState": False,
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
             "invocationGuidance": (

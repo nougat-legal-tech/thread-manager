@@ -203,6 +203,13 @@ _ALTERNATE_READ_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
+# Reads that can fall back to a browser on a public site (spec A3, rung 4).
+# The value names a playbook in back-end/services/browser-task-runner, which
+# fixes the site and makes the session read-only. Offered only when our own
+# lookup broke - never to get around an access or sign-in refusal.
+_BROWSER_PLAYBOOKS: tuple[tuple[str, str], ...] = (("/api/core/latest-docket-entry/", "courtlistener_public_docket"),)
+_BROWSER_FALLBACK_CLASSES = frozenset({"transient", "internal", "not_found"})
+
 # POST endpoints that only read. Kept deliberately short: a path belongs here
 # only when it is certain the call stores nothing.
 _READ_ONLY_POST_PATHS = (
@@ -360,6 +367,16 @@ def _recovery_for(failure_class: str, path: str, side_effect_state: str) -> dict
         recovery["guidance"] += (
             " The same information may be available from another source: you may try ONE of "
             f"{', '.join(alternates)} instead, and say which source the answer came from."
+        )
+    playbook = next(
+        (name for prefix, name in _BROWSER_PLAYBOOKS if path.startswith(prefix)),
+        None,
+    )
+    if playbook and failure_class in _BROWSER_FALLBACK_CLASSES:
+        recovery["browserPlaybook"] = playbook
+        recovery["guidance"] += (
+            " If a browser is offered to you this turn, you may look the public record up there, "
+            "read-only, and must say the answer came from the public site."
         )
     return recovery
 
