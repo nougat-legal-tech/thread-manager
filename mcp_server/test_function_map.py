@@ -13,8 +13,19 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(server)
 
 
+def _run_immediate(coroutine):
+    """Resolve MCP coroutines that complete without an event-loop suspension."""
+    try:
+        coroutine.send(None)
+    except StopIteration as completed:
+        return completed.value
+    finally:
+        coroutine.close()
+    raise AssertionError("Expected this provider-free MCP operation to complete immediately")
+
+
 def test_function_map_returns_category_table_of_contents_then_selected_schemas():
-    index = asyncio.run(server.browse_function_map(object()))
+    index = _run_immediate(server.browse_function_map(object()))
 
     assert index["version"] == 1
     assert index["categories"]
@@ -28,7 +39,7 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert category["count"] > 0
     assert category["subcategories"]
 
-    selected = asyncio.run(server.browse_function_map(object(), category["id"]))
+    selected = _run_immediate(server.browse_function_map(object(), category["id"]))
     assert selected["category"]["id"] == "case_management"
     assert selected["functions"]
     assert all(record["categoryId"] == "case_management" for record in selected["functions"])
@@ -37,7 +48,7 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
 
 
 def test_case_task_aliases_use_verified_shared_operation_ids():
-    selected = asyncio.run(server.browse_function_map(object(), "case_management"))
+    selected = _run_immediate(server.browse_function_map(object(), "case_management"))
     records = {record["name"]: record for record in selected["functions"]}
     expected = {
         "assign_action_item": ("assign_case_action_item", "assign-action-item"),
@@ -55,8 +66,40 @@ def test_case_task_aliases_use_verified_shared_operation_ids():
         assert alias["verification"] == "verified_shared_operation_id"
 
 
+def test_action_item_guidance_uses_task_ids_and_continues_vienna_work():
+    selected = _run_immediate(server.browse_function_map(object(), "case_management"))
+    records = {record["name"]: record for record in selected["functions"]}
+    assign_alias = next(
+        alias
+        for alias in records["assign_action_item"]["callerAliases"]
+        if alias["name"] == "assign_case_action_item"
+    )
+    complete_alias = next(
+        alias
+        for alias in records["complete_action_item"]["callerAliases"]
+        if alias["name"] == "complete_case_action_item"
+    )
+    update_alias = next(
+        alias
+        for alias in records["update_action_item"]["callerAliases"]
+        if alias["name"] == "update_case_action_item"
+    )
+
+    assert assign_alias["argumentBindings"] == {
+        "actionItemId": "item_id",
+        "assigneeEmail": "assignee_id",
+    }
+    assert "never its title" in assign_alias["invocationGuidance"]
+    assert "vienna@nougat.law" in assign_alias["invocationGuidance"]
+    assert "same turn" in assign_alias["invocationGuidance"]
+    assert complete_alias["argumentBindings"] == {"actionItemId": "item_id"}
+    assert "never its title" in complete_alias["invocationGuidance"]
+    assert update_alias["argumentBindings"] == {"actionItemId": "item_id"}
+    assert "never its title" in update_alias["invocationGuidance"]
+
+
 def test_financing_summary_map_exposes_case_scoped_document_reads():
-    selected = asyncio.run(server.browse_function_map(object(), "documents_research"))
+    selected = _run_immediate(server.browse_function_map(object(), "documents_research"))
     rows = {record["name"]: record for record in selected["functions"]}
     expected_reads = {
         "list_uploaded_documents",
@@ -77,7 +120,7 @@ def test_financing_summary_map_exposes_case_scoped_document_reads():
 
 
 def test_document_amendment_alias_navigates_to_shared_approval_workflow():
-    selected = asyncio.run(server.browse_function_map(object(), "documents_research"))
+    selected = _run_immediate(server.browse_function_map(object(), "documents_research"))
     records = {item["name"]: item for item in selected["functions"]}
     amendment = records["document_amendment_request"]
     generation = records["document_generation_request"]
@@ -85,7 +128,7 @@ def test_document_amendment_alias_navigates_to_shared_approval_workflow():
     assert amendment["mcpCallable"] is False
     assert amendment["metadataStatus"] == "chat_proxy_orchestration"
     assert amendment["requiresExplicitConfirmation"] is True
-    assert amendment["orchestrationCategoryIds"] == ["contracts_workflows"]
+    assert amendment["orchestrationCategoryIds"] == ["company_operations", "contracts_workflows"]
     assert amendment["orchestrationMutationToolNames"] == ["create_workflow_run", "manage_workflow_action"]
     assert "seriesai.document.amend" in amendment["invocationGuidance"]
     assert generation["mcpCallable"] is False
@@ -97,7 +140,7 @@ def test_document_amendment_alias_navigates_to_shared_approval_workflow():
 
 
 def test_case_signature_map_entry_is_read_only_and_uses_trusted_scope():
-    selected = asyncio.run(server.browse_function_map(object(), "signatures_approvals"))
+    selected = _run_immediate(server.browse_function_map(object(), "signatures_approvals"))
     record = next(item for item in selected["functions"] if item["name"] == "list_case_signatures")
 
     assert record["mcpCallable"] is True
@@ -110,7 +153,7 @@ def test_case_signature_map_entry_is_read_only_and_uses_trusted_scope():
 
 
 def test_cap_table_legacy_mutations_are_callable_map_entries_with_approval_metadata():
-    selected = asyncio.run(server.browse_function_map(object(), "company_operations"))
+    selected = _run_immediate(server.browse_function_map(object(), "company_operations"))
     records = {record["name"]: record for record in selected["functions"]}
 
     for name in ("add_cap_table_entry", "update_cap_table_entry"):
@@ -135,8 +178,8 @@ def test_cap_table_legacy_mutation_wrappers_propose_through_durable_workflow(mon
 
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
-    add_result = asyncio.run(server.add_cap_table_entry(ctx, "company-1", "4", {"holderName": "Ada"}))
-    update_result = asyncio.run(server.update_cap_table_entry(ctx, "company-1", "4", "entry-1", {"shares": 100}))
+    add_result = _run_immediate(server.add_cap_table_entry(ctx, "company-1", "4", {"holderName": "Ada"}))
+    update_result = _run_immediate(server.update_cap_table_entry(ctx, "company-1", "4", "entry-1", {"shares": 100}))
 
     assert add_result == {"runId": "run-1", "proposalId": "proposal-2", "status": "proposed"}
     assert update_result == {"runId": "run-3", "proposalId": "proposal-4", "status": "proposed"}
@@ -157,7 +200,7 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
 
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
-    created = asyncio.run(
+    created = _run_immediate(
         server.create_workflow_run(
             ctx,
             workflow_type="company.document_generation",
@@ -168,7 +211,7 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
     )
     assert created == {"runId": "run-1"}
 
-    proposed = asyncio.run(
+    proposed = _run_immediate(
         server.manage_workflow_action(
             ctx,
             run_id="run/1",
@@ -186,15 +229,15 @@ def test_workflow_mcp_tools_use_authenticated_shared_preview_approval_api(monkey
     assert calls[1][2]["operation"] == "propose"
 
     with pytest.raises(ValueError, match="trusted explicit user approval"):
-        asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve"))
-    asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve", approved=True))
+        _run_immediate(server.manage_workflow_action(ctx, run_id="run-1", operation="approve"))
+    _run_immediate(server.manage_workflow_action(ctx, run_id="run-1", operation="approve", approved=True))
     assert calls[2][2]["approved"] is True
     assert calls[2][2]["operation"] == "approve"
 
     with pytest.raises(ValueError, match="scope must identify"):
-        asyncio.run(server.create_workflow_run(ctx, "workflow.test", {"appId": "4"}))
+        _run_immediate(server.create_workflow_run(ctx, "workflow.test", {"appId": "4"}))
     with pytest.raises(ValueError, match="operation must be"):
-        asyncio.run(server.manage_workflow_action(ctx, run_id="run-1", operation="approve-all"))
+        _run_immediate(server.manage_workflow_action(ctx, run_id="run-1", operation="approve-all"))
 
 
 @pytest.mark.parametrize("action_policy", ["read_only", "task_execution"])
@@ -207,7 +250,7 @@ def test_propose_automation_carries_explicit_action_policy(monkeypatch, action_p
 
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
-    result = asyncio.run(
+    result = _run_immediate(
         server.propose_automation(
             ctx,
             name="Work through my tasks",
@@ -226,10 +269,10 @@ def test_propose_automation_carries_explicit_action_policy(monkeypatch, action_p
 
 
 def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
-    index = asyncio.run(server.browse_function_map(object()))
+    index = _run_immediate(server.browse_function_map(object()))
     registered_tools = server.mcp._tool_manager.list_tools()
     workflow_category = next(category for category in index["categories"] if category["id"] == "contracts_workflows")
-    selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
+    selected = _run_immediate(server.browse_function_map(object(), "contracts_workflows"))
     records = {record["name"]: record for record in selected["functions"]}
 
     assert workflow_category["count"] > 0
@@ -240,19 +283,22 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         "generate_financing_doc",
         "generate_board_consent",
         "cap_table_issuance_intent",
+        "safe_review_approval",
+        "signature_approval",
         "seriesai.cap_table.issuance.start",
         "request_signature",
-        "seriesai.signature.create",
+        "legal.signature.create",
         "document_amendment_request",
         "seriesai.document.amend",
         "document_generation_request",
         "seriesai.cap_table.issuance.documents.generate",
+        "seriesai.cap_table.workflow.decision",
         "add_cap_table_entry",
         "update_cap_table_entry",
     ]
     assert "explicit user approval" in records["manage_workflow_action"]["invocationGuidance"]
 
-    company_records = asyncio.run(server.browse_function_map(object(), "company_operations"))["functions"]
+    company_records = _run_immediate(server.browse_function_map(object(), "company_operations"))["functions"]
     company_by_name = {record["name"]: record for record in company_records}
     for name in ("generate_safe", "generate_financing_doc", "generate_board_consent"):
         assert company_by_name[name]["appIds"] == ["3", "4"]
@@ -260,14 +306,14 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         assert company_by_name[name]["trustedScopeBindings"] == {"organizationId": "caseId", "appId": "appId"}
         assert company_by_name[name]["requiresExplicitConfirmation"] is True
 
-    communications = asyncio.run(server.browse_function_map(object(), "communications"))
+    communications = _run_immediate(server.browse_function_map(object(), "communications"))
     whatsapp = next(
         record for record in communications["functions"] if record["name"] == "send_whatsapp_message"
     )
     assert "confirm" in whatsapp["requiredInputs"]
     assert whatsapp["requiresExplicitConfirmation"] is True
 
-    case_tools = asyncio.run(server.browse_function_map(object(), "case_management"))
+    case_tools = _run_immediate(server.browse_function_map(object(), "case_management"))
     registered_names = {tool.name for tool in registered_tools}
     assert {"edit_case_action_items", "bulk_edit_case_action_items"} <= registered_names
     assert "edit_company_action_items" not in registered_names
@@ -300,7 +346,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     ):
         read_tool = None
         for category_entry in index["categories"]:
-            read_tool_map = asyncio.run(
+            read_tool_map = _run_immediate(
                 server.browse_function_map(
                     object(),
                     category_id=category_entry["id"],
@@ -326,7 +372,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert company_details["callerAliases"][0]["verification"] == "verified_shared_operation_id"
     revenue_metrics = company_by_name["get_seriesai_revenue_metrics"]
     assert revenue_metrics["appIds"] == ["3", "4", "5"]
-    case_management = asyncio.run(server.browse_function_map(object(), "case_management"))
+    case_management = _run_immediate(server.browse_function_map(object(), "case_management"))
     important_dates = next(
         record for record in case_management["functions"] if record["name"] == "list_case_important_dates"
     )
@@ -337,7 +383,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert timeline_alias["appIds"] == ["3", "4"]
     assert timeline_alias["defaultArguments"]["sort_order"] == "desc"
     assert timeline_alias["argumentBindings"]["lifecycleStage"] == "stage"
-    signature_details = asyncio.run(server.browse_function_map(object(), "signatures_approvals"))
+    signature_details = _run_immediate(server.browse_function_map(object(), "signatures_approvals"))
     signature_detail = next(
         record for record in signature_details["functions"] if record["name"] == "get_signature_request_detail"
     )
@@ -356,7 +402,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert deadlines_alias["defaultArguments"]["upcoming_only"] is True
     assert deadlines_alias["argumentBindings"]["openOnly"] == "open_only"
 
-    scheduling = asyncio.run(server.browse_function_map(object(), "scheduling"))
+    scheduling = _run_immediate(server.browse_function_map(object(), "scheduling"))
     date_editor = next(record for record in scheduling["functions"] if record["name"] == "edit_case_important_dates")
     acknowledgment_alias = next(
         alias for alias in date_editor["callerAliases"] if alias["name"] == "deadline_acknowledgment"
@@ -364,7 +410,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert acknowledgment_alias["verification"] == "verified_contract_mapping"
     assert all(record["name"] != "deadline_acknowledgment" for record in scheduling["functions"])
 
-    integrations = asyncio.run(server.browse_function_map(object(), "integrations_admin"))
+    integrations = _run_immediate(server.browse_function_map(object(), "integrations_admin"))
     sharepoint_drives = next(
         record for record in integrations["functions"] if record["name"] == "list_sharepoint_site_drives"
     )
@@ -437,7 +483,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         "contracts_workflows": {"start_workflow_gap_plan"},
     }
     for category_id, expected_names in legacy_inventory_by_category.items():
-        inventory_category = asyncio.run(server.browse_function_map(object(), category_id))
+        inventory_category = _run_immediate(server.browse_function_map(object(), category_id))
         inventory_records = {record["name"]: record for record in inventory_category["functions"]}
         assert expected_names <= inventory_records.keys()
         for name in expected_names:
@@ -451,7 +497,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
                 assert "operationIds" not in record
 
     subgroup = workflow_category["subcategories"][0]
-    selected_subgroup = asyncio.run(
+    selected_subgroup = _run_immediate(
         server.browse_function_map(
             object(), workflow_category["id"], subcategory_id=subgroup["id"]
         )
@@ -464,7 +510,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     workflow_group = next(
         item for item in contract_category["subcategories"] if item["id"] == "manage_workflow"
     )
-    workflow_tools = asyncio.run(
+    workflow_tools = _run_immediate(
         server.browse_function_map(object(), "contracts_workflows", subcategory_id="manage_workflow")
     )
     workflow_names = {record["name"] for record in workflow_tools["functions"]}
@@ -478,7 +524,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
 
 
 def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlisted(monkeypatch):
-    selected = asyncio.run(
+    selected = _run_immediate(
         server.browse_function_map(object(), "contracts_workflows", ["retrieve_in_house_requests"])
     )
     record = next(item for item in selected["functions"] if item["name"] == "retrieve_in_house_requests")
@@ -487,7 +533,7 @@ def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlist
     assert {"chat_run", "chat_proxy", "mcp"}.issubset(record["surfaces"])
     assert record["mcpCallable"] is True
 
-    obligations_result = asyncio.run(
+    obligations_result = _run_immediate(
         server.browse_function_map(object(), "contracts_workflows", ["retrieve_in_house_obligations"])
     )
     obligations = next(
@@ -505,7 +551,7 @@ def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlist
         "retrieve_in_house_counterparties",
         "search_in_house_knowledge",
     ):
-        scoped_result = asyncio.run(
+        scoped_result = _run_immediate(
             server.browse_function_map(object(), "contracts_workflows", [tool_name])
         )
         scoped_tool = next(item for item in scoped_result["functions"] if item["name"] == tool_name)
@@ -522,7 +568,7 @@ def test_in_house_request_list_is_callable_and_remains_app_scoped_when_allowlist
 
     monkeypatch.setattr(server, "_get", fake_get)
     ctx = object()
-    assert asyncio.run(server.retrieve_in_house_requests(ctx)) == [{"id": "request-1"}]
+    assert _run_immediate(server.retrieve_in_house_requests(ctx)) == [{"id": "request-1"}]
     assert captured == {"ctx": ctx, "path": "/api/in-house/requests/", "params": None}
 
 
@@ -533,7 +579,7 @@ def test_lifecycle_stage_capability_uses_company_operations_category():
 
 
 def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
-    selected = asyncio.run(
+    selected = _run_immediate(
         server.browse_function_map(object(), "company_operations", ["get_seriesai_company_details"])
     )
     rows = {record["name"]: record for record in selected["functions"]}
@@ -545,7 +591,7 @@ def test_allowlisted_function_map_keeps_noncallable_orchestration_record():
 
 
 def test_cap_table_issuance_is_navigable_as_shared_workflow_orchestration():
-    selected = asyncio.run(
+    selected = _run_immediate(
         server.browse_function_map(object(), "company_operations", ["cap_table_issuance_intent"])
     )
     record = next(item for item in selected["functions"] if item.get("name") == "cap_table_issuance_intent")
@@ -559,7 +605,7 @@ def test_cap_table_issuance_is_navigable_as_shared_workflow_orchestration():
 
 
 def test_signature_request_is_navigable_as_shared_workflow_orchestration():
-    selected = asyncio.run(
+    selected = _run_immediate(
         server.browse_function_map(object(), "signatures_approvals", ["request_signature"])
     )
     record = next(item for item in selected["functions"] if item.get("name") == "request_signature")
@@ -569,12 +615,33 @@ def test_signature_request_is_navigable_as_shared_workflow_orchestration():
     assert record["metadataStatus"] == "chat_proxy_orchestration"
     assert record["requiresExplicitConfirmation"] is True
     assert "contracts_workflows" in record["orchestrationCategoryIds"]
-    assert "seriesai.signature.create" in record["invocationGuidance"]
+    assert "legal.signature.create" in record["invocationGuidance"]
     assert "signatureRecipients to signers" in record["invocationGuidance"]
 
 
+def test_legacy_issuance_decisions_are_navigable_as_shared_workflow_actions():
+    selected = _run_immediate(
+        server.browse_function_map(
+            object(),
+            "signatures_approvals",
+            ["safe_review_approval", "signature_approval"],
+        )
+    )
+    records = {item["name"]: item for item in selected["functions"]}
+
+    for name, review_kind in (("safe_review_approval", "SAFE"), ("signature_approval", "signature")):
+        record = records[name]
+        assert record["appIds"] == ["3", "4"]
+        assert record["mcpCallable"] is False
+        assert record["metadataStatus"] == "chat_proxy_orchestration"
+        assert record["requiresExplicitConfirmation"] is True
+        assert "seriesai.cap_table.workflow.decision" in record["invocationGuidance"]
+        assert f"reviewKind={review_kind}" in record["invocationGuidance"]
+        assert "workflowId" in record["invocationGuidance"]
+
+
 def test_lifecycle_classifier_is_in_documents_research_and_requires_approval(monkeypatch):
-    selected = asyncio.run(server.browse_function_map(object(), "documents_research", ["classify_lifecycle_upload"]))
+    selected = _run_immediate(server.browse_function_map(object(), "documents_research", ["classify_lifecycle_upload"]))
     record = next(item for item in selected["functions"] if item.get("name") == "classify_lifecycle_upload")
     assert record["appIds"] == ["3", "4"]
     assert record["mutatesState"] is True
@@ -588,7 +655,7 @@ def test_lifecycle_classifier_is_in_documents_research_and_requires_approval(mon
 
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
-    result = asyncio.run(server.classify_lifecycle_upload(
+    result = _run_immediate(server.classify_lifecycle_upload(
         ctx, "company-1", "4", files=[{"name": "board-consent.pdf"}],
         attachments=[{"source_attachment": {"name": "signed.pdf"}}],
         text_ready_attachments=[{"filename": "bylaws.pdf", "text": "signed text"}],
@@ -603,7 +670,7 @@ def test_lifecycle_classifier_is_in_documents_research_and_requires_approval(mon
 
 
 def test_in_house_category_map_preserves_required_idempotency_inputs():
-    selected = asyncio.run(server.browse_function_map(object(), "contracts_workflows"))
+    selected = _run_immediate(server.browse_function_map(object(), "contracts_workflows"))
     records = {record["name"]: record for record in selected["functions"]}
 
     assert records["create_in_house_request"]["requiredInputs"] == [
@@ -625,7 +692,7 @@ def test_action_item_filters_match_django_api_query_contract(monkeypatch):
         return {"items": []}
 
     monkeypatch.setattr(server, "_get", fake_get)
-    asyncio.run(
+    _run_immediate(
         server.list_action_items(
             SimpleNamespace(),
             case_id="matter-1",
@@ -668,7 +735,7 @@ def test_important_date_filters_match_django_api_query_contract(monkeypatch):
         return {"items": []}
 
     monkeypatch.setattr(server, "_get", fake_get)
-    asyncio.run(
+    _run_immediate(
         server.list_case_important_dates(
             SimpleNamespace(),
             case_id="company-1",
@@ -714,7 +781,7 @@ def test_deadline_acknowledgment_forwards_approval_to_shared_edit_api(monkeypatc
 
     monkeypatch.setattr(server, "_post", fake_post)
     ctx = object()
-    result = asyncio.run(
+    result = _run_immediate(
         server.edit_case_important_dates(
             ctx,
             case_id="case-1",

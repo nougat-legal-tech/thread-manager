@@ -20,7 +20,7 @@ describe('assertMeetingToolsAuthorized', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('checks each requested tool with the signed grant and sends no content body', async () => {
+  it('checks the tool batch once with the signed grant and sends no content body', async () => {
     const fetcher = jest.fn().mockResolvedValue(createResponse({ authorized: true }));
     const signal = AbortSignal.abort();
 
@@ -35,9 +35,8 @@ describe('assertMeetingToolsAuthorized', () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher).toHaveBeenNthCalledWith(
-      1,
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
       new URL(
         `/api/core/meeting-sessions/internal/${SESSION_ID}/agent-tool-authorization/`,
         'https://api.example.test',

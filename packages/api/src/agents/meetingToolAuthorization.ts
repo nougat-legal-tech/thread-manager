@@ -55,38 +55,34 @@ export async function assertMeetingToolsAuthorized({
     throw new Error('Vienna meeting tool authorization is unavailable');
   }
 
-  const checks = toolNames.map(async () => {
-    let response: MeetingToolAuthorizationResponse;
-    try {
-      response = await fetcher(url, {
-        method: 'POST',
-        headers: { 'X-Vienna-Meeting-Retention': retentionGrant },
-        signal: signalFactory(),
-      });
-    } catch (_error) {
-      throw new Error('Vienna meeting tool authorization is unavailable');
-    }
+  let response: MeetingToolAuthorizationResponse;
+  try {
+    response = await fetcher(url, {
+      method: 'POST',
+      headers: { 'X-Vienna-Meeting-Retention': retentionGrant },
+      signal: signalFactory(),
+    });
+  } catch (_error) {
+    throw new Error('Vienna meeting tool authorization is unavailable');
+  }
 
-    if (!response.ok) {
-      throw new Error('Vienna meeting tool authorization was denied');
-    }
+  if (!response.ok) {
+    throw new Error('Vienna meeting tool authorization was denied');
+  }
 
-    let result: unknown;
-    try {
-      result = await response.json();
-    } catch (_error) {
-      throw new Error('Vienna meeting tool authorization was denied');
-    }
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch (_error) {
+    throw new Error('Vienna meeting tool authorization was denied');
+  }
 
-    if (
-      typeof result !== 'object' ||
-      result === null ||
-      !('authorized' in result) ||
-      result.authorized !== true
-    ) {
-      throw new Error('Vienna meeting tool authorization was denied');
-    }
-  });
-
-  await Promise.all(checks);
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    !('authorized' in result) ||
+    result.authorized !== true
+  ) {
+    throw new Error('Vienna meeting tool authorization was denied');
+  }
 }

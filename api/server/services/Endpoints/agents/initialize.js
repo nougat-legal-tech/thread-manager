@@ -82,6 +82,7 @@ const {
   resolveMemoryAvailability,
   enrichLoadedToolsWithAgentContext,
 } = require('./skillDeps');
+const { loadToolsAfterMeetingAuthorization } = require('./meetingToolLoadBoundary');
 const {
   loadCodeApiKey,
   provisionToCodeEnv,
@@ -455,45 +456,48 @@ const initializeClientWithProvider = async ({
       runSignal,
       executionContext,
     ) => {
-      await assertMeetingToolsAuthorized({
-        baseUrl: process.env.DJANGO_API_BASE_URL,
-        retentionGrant: req.get?.('x-vienna-meeting-retention'),
-        sessionId: conversationId,
-        toolNames,
-        fetcher: globalThis.fetch,
-      });
-
       const ctx = runFileBindings.getContext(agentId, executionContext) ?? {};
       logger.debug(`[ON_TOOL_EXECUTE] ctx found: ${!!ctx.userMCPAuthMap}, agent: ${ctx.agent?.id}`);
       logger.debug(`[ON_TOOL_EXECUTE] toolRegistry size: ${ctx.toolRegistry?.size ?? 'undefined'}`);
 
-      const result = await loadToolsForExecution({
-        req,
-        res,
-        signal: runSignal ?? signal,
-        streamId,
-        conversationId,
-        requestBody: runtimeRequestBody,
-        toolNames,
-        agent: ctx.agent,
-        runFileCodeExecutionContext: runFileBindings.getCodeExecutionContext(
-          agentId,
-          executionContext,
-        ),
-        toolRegistry: ctx.toolRegistry,
-        callerCapabilityProjection,
-        backgroundToolNames: ctx.backgroundToolNames,
-        intentToolNames: ctx.intentToolNames,
-        mcpAvailableTools: ctx.mcpAvailableTools,
-        requestScopedConnections: ctx.requestScopedConnections,
-        userMCPAuthMap: ctx.userMCPAuthMap,
-        upstreamTokenProvider,
-        upstreamTokenProviderResolver,
-        tool_resources: ctx.tool_resources,
-        actionsEnabled: ctx.actionsEnabled,
-        accessibleMcpServerNames: ctx.accessibleMcpServerNames,
-        jobCreatedAt,
-      });
+      const result = await loadToolsAfterMeetingAuthorization(
+        () =>
+          assertMeetingToolsAuthorized({
+            baseUrl: process.env.DJANGO_API_BASE_URL,
+            retentionGrant: req.get?.('x-vienna-meeting-retention'),
+            sessionId: conversationId,
+            toolNames,
+            fetcher: globalThis.fetch,
+          }),
+        () =>
+          loadToolsForExecution({
+            req,
+            res,
+            signal: runSignal ?? signal,
+            streamId,
+            conversationId,
+            requestBody: runtimeRequestBody,
+            toolNames,
+            agent: ctx.agent,
+            runFileCodeExecutionContext: runFileBindings.getCodeExecutionContext(
+              agentId,
+              executionContext,
+            ),
+            toolRegistry: ctx.toolRegistry,
+            callerCapabilityProjection,
+            backgroundToolNames: ctx.backgroundToolNames,
+            intentToolNames: ctx.intentToolNames,
+            mcpAvailableTools: ctx.mcpAvailableTools,
+            requestScopedConnections: ctx.requestScopedConnections,
+            userMCPAuthMap: ctx.userMCPAuthMap,
+            upstreamTokenProvider,
+            upstreamTokenProviderResolver,
+            tool_resources: ctx.tool_resources,
+            actionsEnabled: ctx.actionsEnabled,
+            accessibleMcpServerNames: ctx.accessibleMcpServerNames,
+            jobCreatedAt,
+          }),
+      );
 
       logger.debug(`[ON_TOOL_EXECUTE] loaded ${result.loadedTools?.length ?? 0} tools`);
       /** Per-agent narrowed flag (admin capability AND agent.tools
@@ -1905,4 +1909,7 @@ function createInitializeClient(dependencies = {}) {
 
 const initializeClient = createInitializeClient();
 
-module.exports = { createInitializeClient, initializeClient };
+module.exports = {
+  createInitializeClient,
+  initializeClient,
+};

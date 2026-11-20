@@ -65,6 +65,7 @@ def test_propose_sends_a_prompt_automation_to_the_proposal_endpoint(calls):
                 "cadence": WEEKLY,
                 "scope": {"type": "user", "id": None},
                 "timezone": "America/New_York",
+                    "actionPolicy": "read_only",
                 "via": "chat",
             },
         )

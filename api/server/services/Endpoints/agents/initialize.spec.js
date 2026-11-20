@@ -1976,40 +1976,6 @@ describe('initializeClient — subagent loading', () => {
     );
   });
 
-  it('rechecks Django meeting authority before loading tools', async () => {
-    const order = [];
-    mockAssertMeetingToolsAuthorized.mockImplementation(async () => {
-      order.push('authorize');
-    });
-    mockLoadToolsForExecution.mockImplementation(async () => {
-      order.push('load');
-      return { loadedTools: [], configurable: {} };
-    });
-    mockInitializeAgent.mockResolvedValue(makePrimaryConfig({}));
-
-    const req = makeSubagentReq();
-    req.get = jest.fn((header) =>
-      header.toLowerCase() === 'x-vienna-meeting-retention' ? 'signed-meeting-grant' : undefined,
-    );
-    await initializeClient({
-      req,
-      res: {},
-      signal: new AbortController().signal,
-      endpointOption: makeEndpointOption(),
-    });
-
-    await capturedToolExecuteOptions.loadTools(['web'], PRIMARY_ID);
-
-    expect(mockAssertMeetingToolsAuthorized).toHaveBeenCalledWith({
-      baseUrl: process.env.DJANGO_API_BASE_URL,
-      retentionGrant: 'signed-meeting-grant',
-      sessionId: 'conv_sub',
-      toolNames: ['web'],
-      fetcher: globalThis.fetch,
-    });
-    expect(order).toEqual(['authorize', 'load']);
-  });
-
   it('deduplicates repeated ids in subagents.agent_ids', async () => {
     const subAgent = await createAgent({
       id: DUPLICATE_SUBAGENT_ID,

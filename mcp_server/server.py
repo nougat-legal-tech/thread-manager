@@ -346,9 +346,7 @@ def _tool_failure_envelope(
 
 def _recovery_for(failure_class: str, path: str, side_effect_state: str) -> dict[str, Any]:
     """What the caller may do next, plus other sources to try when a read failed."""
-    recovery: dict[str, Any] = dict(
-        zip(("allowed", "guidance"), _RECOVERY_BY_CLASS[failure_class], strict=True)
-    )
+    recovery: dict[str, Any] = dict(zip(("allowed", "guidance"), _RECOVERY_BY_CLASS[failure_class], strict=True))
     # Alternates are for reads only: the same question asked of another
     # source. A failed write is never redirected to a different system.
     if side_effect_state != "none" or failure_class == "needs_confirmation":
@@ -3914,7 +3912,16 @@ async def generate_case_bill(ctx: Context, case_id: str, billing_period: str | N
     return await _post(ctx, f"/api/core/billing/cases/{case_id}/generate", {"billingPeriod": billing_period})
 
 
-@mcp.tool(description="Export logged hours for the authenticated user's assigned firm cases.")
+@mcp.tool(
+    description=(
+        "Export logged hours for the authenticated user's assigned firm cases. "
+        "period must be one of last_week, this_week, next_week, two_weeks, biweekly, month, last_month; "
+        "for a specific calendar month or date range (for example October 2026) omit period and pass "
+        "billing_week_start and billing_week_end as YYYY-MM-DD (inclusive). output_format is csv, pdf, or both; "
+        'delivery_mode is combined or per_case. Live 2026-11-19: period="2026-10" and '
+        'delivery_mode="read_only" were rejected with HTTP 400.'
+    )
+)
 async def export_firm_hours(
     ctx: Context,
     period: str | None = None,

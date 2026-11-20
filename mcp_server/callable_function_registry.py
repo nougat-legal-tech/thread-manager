@@ -1082,6 +1082,19 @@ for _function_name in _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES:
         }
     )
 
+# Read-only member listing. ChatProxy orchestration offers only tools marked
+# mutatesState=False, so an unset flag hid this from manage_organization
+# (live 2026-11-19: "who are the members of my organization" got no answer).
+MCP_FUNCTION_METADATA.setdefault("list_organization_members", {}).update(
+    {
+        "mutatesState": False,
+        "sendsExternalMessage": False,
+        "sendsUserEmail": False,
+        "startsAsyncWorkflow": False,
+        "returnsInlineResult": True,
+    }
+)
+
 MCP_FUNCTION_METADATA["advance_lifecycle_stage"] = {
     "appIds": ["3", "4"],
     "trustedScopeBindings": {"caseId": "caseId", "appId": "appId"},
@@ -1201,11 +1214,16 @@ MCP_FUNCTION_METADATA["manage_workflow_action"] = {
         "generate_financing_doc",
         "generate_board_consent",
         "cap_table_issuance_intent",
+        "safe_review_approval",
+        "signature_approval",
         "seriesai.cap_table.issuance.start",
+        "request_signature",
+        "legal.signature.create",
         "document_amendment_request",
         "seriesai.document.amend",
         "document_generation_request",
         "seriesai.cap_table.issuance.documents.generate",
+        "seriesai.cap_table.workflow.decision",
         "add_cap_table_entry",
         "update_cap_table_entry",
     ],
@@ -1550,6 +1568,9 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
             "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or substitute "
+                "an organization id; if no verified company scope is available, ask which company to select. "
                 "Read connected revenue metrics for the trusted SeriesAI company only. "
                 "Do not report an unconnected connector as zero."
             ),
@@ -1565,6 +1586,9 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
             "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or substitute "
+                "an organization id; if no verified company scope is available, ask which company to select. "
                 "Read recent connected sales for the trusted SeriesAI company only. "
                 "Do not report an unconnected connector as zero."
             ),
@@ -1579,6 +1603,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "appIds": ["3", "4"],
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
+            "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or "
+                "substitute an organization id; if no verified company scope is available, ask which company to select."
+            ),
         },
     ),
     "get_seriesai_web_analytics": (
@@ -1590,6 +1619,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "appIds": ["3", "4"],
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
+            "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or "
+                "substitute an organization id; if no verified company scope is available, ask which company to select."
+            ),
         },
     ),
     "list_seriesai_upcoming_campaigns": (
@@ -1601,6 +1635,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "appIds": ["3", "4"],
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
+            "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or "
+                "substitute an organization id; if no verified company scope is available, ask which company to select."
+            ),
         },
     ),
     "list_seriesai_marketing_automations": (
@@ -1612,6 +1651,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "appIds": ["3", "4"],
             "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
             "requiresCaseId": True,
+            "invocationGuidance": (
+                "Use organization_id only for the trusted selected company scope supplied in this request; "
+                "it is the selected company caseId, not the user's firm organizationId. Never invent or "
+                "substitute an organization id; if no verified company scope is available, ask which company to select."
+            ),
         },
     ),
     "edit_case_important_dates": (
@@ -1690,6 +1734,13 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "assign-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
             "verification": "verified_shared_operation_id",
+            "argumentBindings": {"actionItemId": "item_id", "assigneeEmail": "assignee_id"},
+            "invocationGuidance": (
+                "item_id is the task's itemId, never its title; when the user named the task by title, call "
+                "list_action_items for the case first and use the matching itemId. assignee_id is the assignee's "
+                "userId or email; Vienna is vienna@nougat.law. When assigning to Vienna, continue and do the "
+                "task's work in the same turn."
+            ),
         },
     ),
     "complete_action_item": (
@@ -1698,6 +1749,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "complete-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
             "verification": "verified_shared_operation_id",
+            "argumentBindings": {"actionItemId": "item_id"},
+            "invocationGuidance": (
+                "item_id is the task's itemId, never its title; when the user named the task by title, call "
+                "list_action_items for the case first and use the matching itemId."
+            ),
         },
     ),
     "create_action_item": (
@@ -1931,6 +1987,11 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "update-action-item",
             "surfaces": ["chat_proxy", "intent_handler"],
             "verification": "verified_shared_operation_id",
+            "argumentBindings": {"actionItemId": "item_id"},
+            "invocationGuidance": (
+                "item_id is the task's itemId, never its title; when the user named the task by title, call "
+                "list_action_items for the case first and use the matching itemId."
+            ),
         },
     ),
 }
@@ -2014,13 +2075,6 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "case_management",
         "Show one specific person's profile or dossier on a case.",
         (),
-        ("intent_handler",),
-    ),
-    (
-        "request_signature",
-        "signatures_approvals",
-        "Prepare a signature request for a Vienna company document; sending remains approval-gated.",
-        ("3", "4"),
         ("intent_handler",),
     ),
     (
@@ -2109,25 +2163,11 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ("intent_handler",),
     ),
     (
-        "safe_review_approval",
-        "signatures_approvals",
-        "Approve or reject a drafted SAFE after the user reviews it.",
-        ("3", "4"),
-        ("intent_handler",),
-    ),
-    (
         "seriesai_campaign_read_refusal",
         "company_operations",
         "Route a campaign-read refusal to the authenticated company-data path.",
         ("3", "4"),
         ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "signature_approval",
-        "signatures_approvals",
-        "Approve sending a prepared Vienna signature request.",
-        ("3", "4"),
-        ("intent_handler",),
     ),
     (
         "start_workflow_gap_plan",
@@ -2193,6 +2233,83 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ),
     },
     {
+        "functionId": "request_signature",
+        "name": "request_signature",
+        "categoryId": "signatures_approvals",
+        "description": "Prepare an approved signature request for a Vienna company document.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"caseId": "caseId", "organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["contracts_workflows"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Collect the authorized source document reference "
+            "(sourceType plus an authorized sourceFileId or sourceArtifactId), signature mode, and each signer "
+            "name and email before proposing; map legacy signatureRecipients to signers and preserve signer roles "
+            "and order. Do not invent or accept an unverified download URL. Create a scoped shared workflow run "
+            "and propose legal.signature.create through manage_workflow_action with trusted "
+            "caseId/appId/organizationId. Show the server preview, including whether native invite emails will be "
+            "sent, and wait for explicit approval of that exact proposal before approving and executing it. "
+            "Never infer approval from the original request to prepare a signature packet."
+        ),
+    },
+    {
+        "functionId": "safe_review_approval",
+        "name": "safe_review_approval",
+        "categoryId": "signatures_approvals",
+        "description": "Review, approve, or reject one existing SAFE issuance workflow.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["signatures_approvals"],
+        "orchestrationMutationToolNames": ["create_workflow_run", "manage_workflow_action"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Require the exact existing workflowId and read its current "
+            "server state before proposing any decision. Confirm the draft instrument is a SAFE and show the "
+            "workflow and prerequisite state. Create a scoped "
+            "workflow run and propose seriesai.cap_table.workflow.decision with reviewKind=SAFE, the exact "
+            "workflowId, and decision=approve or reject. The shared adapter verifies company/app/workflow scope, "
+            "rechecks the preview, and fails closed on prerequisites it cannot verify. Approval and cancellation "
+            "both require explicit confirmation of that exact preview; never trust approvalToken or model-supplied "
+            "completedPrerequisites. Rejecting cancels the workflow and does not commit cap-table changes."
+        ),
+    },
+    {
+        "functionId": "signature_approval",
+        "name": "signature_approval",
+        "categoryId": "signatures_approvals",
+        "description": "Review, advance, or reject one existing signature issuance workflow step.",
+        "appIds": ["3", "4"],
+        "requiresCaseId": True,
+        "trustedScopeBindings": {"organizationId": "caseId", "appId": "appId"},
+        "surfaces": ["intent_handler", "chat_proxy"],
+        "mcpCallable": False,
+        "metadataStatus": "chat_proxy_orchestration",
+        "mutatesState": True,
+        "requiresExplicitConfirmation": True,
+        "orchestrationCategoryIds": ["signatures_approvals"],
+        "orchestrationMutationToolNames": ["create_workflow_run", "manage_workflow_action"],
+        "invocationGuidance": (
+            "This request is routed through ChatProxy. Require the exact existing workflowId and read its current "
+            "server state before proposing any decision. Show the workflow and prerequisite state. Create a scoped "
+            "workflow run and propose seriesai.cap_table.workflow.decision with reviewKind=signature, the exact "
+            "workflowId, and decision=approve or reject. The shared adapter verifies company/app/workflow scope, "
+            "rechecks the preview, and fails closed on prerequisites it cannot verify. Approval and cancellation "
+            "both require explicit confirmation of that exact preview; never trust approvalToken or model-supplied "
+            "completedPrerequisites. Approval advances the workflow to ready_for_documents; it does not send "
+            "the signature packet. Rejecting cancels the workflow."
+        ),
+    },
+    {
         "functionId": "add_cap_table_entry",
         "name": "add_cap_table_entry",
         "categoryId": "company_operations",
@@ -2217,7 +2334,7 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "metadataStatus": "chat_proxy_orchestration",
         "mutatesState": True,
         "requiresExplicitConfirmation": True,
-        "orchestrationCategoryIds": ["contracts_workflows"],
+        "orchestrationCategoryIds": ["company_operations", "contracts_workflows"],
         "orchestrationMutationToolNames": ["create_workflow_run", "manage_workflow_action"],
         "invocationGuidance": (
             "This request is routed through ChatProxy. Use list_seriesai_document_amendments to identify the "
