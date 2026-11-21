@@ -429,12 +429,45 @@ def test_every_alternate_is_a_real_read_only_search_tool_and_never_itself():
         "/api/core/integrations/relativity/documents/search": "search_relativity_documents",
         "/api/core/rag-query-proxy/": "search_documents",
     }
-    assert {prefix for prefix, _tools in server._ALTERNATE_READ_SOURCES} == set(  # noqa: SLF001
-        source_tool_by_prefix
-    )
+    assert {prefix for prefix, _tools in server._ALTERNATE_READ_SOURCES} == set(source_tool_by_prefix)  # noqa: SLF001
     for prefix, tools in server._ALTERNATE_READ_SOURCES:  # noqa: SLF001
         assert tools
         assert source_tool_by_prefix[prefix] not in tools
         for tool in tools:
             assert callable(getattr(server, tool)), tool
             assert tool.startswith("search_"), tool
+
+
+# --- Browser fallback for public records (spec A3, rung 4) --------------------
+
+
+def test_a_broken_public_docket_lookup_names_the_browser_playbook(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), "/api/latest-docket-entry/"))  # noqa: SLF001
+
+    recovery = _envelope(raised.value)["recovery"]
+    assert recovery["browserPlaybook"] == "courtlistener_public_docket"
+    assert "read-only" in recovery["guidance"]
+
+
+def test_the_browser_is_never_offered_around_an_access_or_sign_in_refusal(monkeypatch):
+    for status in (401, 403, 400):
+        _client_returning(monkeypatch, _response("GET", status, json={"detail": "no"}))
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            _run(server._get(object(), "/api/latest-docket-entry/"))  # noqa: SLF001
+        assert "browserPlaybook" not in _envelope(raised.value)["recovery"], status
+
+
+def test_other_reads_and_all_writes_get_no_browser(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
+    with pytest.raises(httpx.HTTPStatusError) as other_read:
+        _run(server._get(object(), "/api/core/integrations/clio/matters/"))  # noqa: SLF001
+    _client_returning(monkeypatch, _response("POST", 404, json={"detail": "missing"}))
+    with pytest.raises(httpx.HTTPStatusError) as write:
+        _run(server._post(object(), "/api/core/add-case/", {}))  # noqa: SLF001
+
+    assert "browserPlaybook" not in _envelope(other_read.value)["recovery"]
+    assert "browserPlaybook" not in _envelope(write.value)["recovery"]
+    assert {name for _prefix, name in server._BROWSER_PLAYBOOKS} == {"courtlistener_public_docket"}  # noqa: SLF001
