@@ -2762,6 +2762,7 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
                             "argumentBindings",
                             "appIds",
                             "requiresCaseId",
+                            "mutatesState",
                             "trustedScopeBindings",
                         ):
                             if field in alias:
