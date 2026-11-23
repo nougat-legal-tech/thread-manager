@@ -1150,7 +1150,10 @@ test.describe('message tree stream operations', () => {
 
     await sendAndExpectReply(page, errorPrompt, errorHeadline);
     await expect(messagesView(page).getByText(errorHeadline)).toBeVisible({ timeout: 30000 });
-    await messagesView(page).getByRole('button', { name: 'Provider response' }).click();
+    const providerDetails = messagesView(page).getByRole('button', { name: 'Provider response' });
+    if (await providerDetails.count()) {
+      await providerDetails.click();
+    }
     await expect(messagesView(page).getByText(providerError)).toBeVisible();
 
     await sendAndExpectReply(page, afterErrorPrompt, afterErrorReply);

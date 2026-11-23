@@ -23,8 +23,11 @@ test.describe('generation finalization invariant', () => {
       sendMessageAndWaitForCompletion(page, `E2E_FORCED_ERROR:${label}`),
     ).rejects.toThrow('Persisted assistant response contains an unexpected error');
     await expect(messagesView(page).getByText(providerHeadline)).toBeVisible();
-    /** Long provider responses are intentionally collapsed under the Provider response control. */
-    await messagesView(page).getByRole('button', { name: 'Provider response' }).click();
+    /** Long or multiline details collapse; short provider details render inline. */
+    const providerDetails = messagesView(page).getByRole('button', { name: 'Provider response' });
+    if (await providerDetails.count()) {
+      await providerDetails.click();
+    }
     await expect(messagesView(page).getByText(providerError)).toBeVisible();
   });
 });

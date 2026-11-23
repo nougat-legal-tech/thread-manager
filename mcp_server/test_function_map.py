@@ -278,6 +278,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert workflow_category["count"] > 0
     assert records["create_workflow_run"]["mcpCallable"] is True
     assert records["manage_workflow_action"]["requiresExplicitConfirmation"] is True
+    assert records["manage_workflow_action"]["unconfirmedSafeOperations"] == ["propose"]
     assert records["manage_workflow_action"]["trustedConfirmationActions"] == [
         "generate_safe",
         "generate_financing_doc",

@@ -1220,6 +1220,9 @@ MCP_FUNCTION_METADATA["manage_workflow_action"] = {
     "startsAsyncWorkflow": False,
     "returnsInlineResult": True,
     "requiresExplicitConfirmation": True,
+    # Proposals create a reviewable preview but cannot execute the change.
+    # Approval, execution, rejection, and rollback remain confirmation-gated.
+    "unconfirmedSafeOperations": ["propose"],
     "trustedConfirmationActions": [
         "generate_safe",
         "generate_financing_doc",
