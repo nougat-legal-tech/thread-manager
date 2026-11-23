@@ -298,6 +298,15 @@ _CHAT_RUN_TOOL_GUIDANCE = [
         ),
     },
     {
+        "name": "retrieve_public_latest_docket_entry",
+        "operationIds": ["get-public-latest-docket-entry"],
+        "requiredInputs": ["caseId", "appId"],
+        "invocationGuidance": (
+            "Only after retrieve_latest_docket_entry failed. Pass the same caseId and appId, "
+            "and say the answer came from CourtListener."
+        ),
+    },
+    {
         "name": "retrieve_case_calendar",
         "operationIds": ["get-case-calendar"],
         "requiredInputs": ["caseId"],
@@ -953,8 +962,10 @@ MCP_FUNCTION_METADATA["join_meeting"] = {
     "returnsInlineResult": True,
     "invocationGuidance": (
         "A direct request to have Vienna join plus the meeting link the user supplied for that purpose is "
-        "sufficient instruction; do not demand a second confirmation or send the user to another page. A link-only "
-        "reply to Vienna's request for the meeting link also completes that join request. Before dispatch, ensure "
+        "sufficient instruction; the direct join request with a link supplied for that purpose authorizes this "
+        "session, so do not ask for a second confirmation or send the user to another page. A link-only reply "
+        "authorizes the join when it directly answers Vienna's request for the link. A bare link without that "
+        "active join context is not authorization. Before dispatch, ensure "
         "the user has been told Vienna joins visibly, processes live meeting audio, and retains the complete meeting "
         "transcript and summary under the user's meeting settings until the owner deletes them; remind the user to "
         "notify other attendees. Do not wait for another yes after the user directly requested "
@@ -1657,6 +1668,21 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
                 "Use organization_id only for the trusted selected company scope supplied in this request; "
                 "it is the selected company caseId, not the user's firm organizationId. Never invent or "
                 "substitute an organization id; if no verified company scope is available, ask which company to select."
+            ),
+        },
+    ),
+    "list_seriesai_document_templates": (
+        {
+            "name": "list-seriesai-document-templates",
+            "operationId": "list-seriesai-document-templates",
+            "surfaces": ["chat_proxy"],
+            "verification": "verified_contract_mapping",
+            "appIds": ["3", "4", "5"],
+            "mutatesState": False,
+            "trustedScopeBindings": {"organization_id": "caseId"},
+            "invocationGuidance": (
+                "Use organization_id only for the selected Vienna company scope (caseId), not a law-firm "
+                "organization id. List available templates without starting document generation."
             ),
         },
     ),

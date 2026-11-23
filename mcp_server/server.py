@@ -201,13 +201,17 @@ _ALTERNATE_READ_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "/api/core/rag-query-proxy/",
         ("search_imanage_documents", "search_netdocuments", "search_sharepoint_documents"),
     ),
+    # Our docket table broke: ask CourtListener's API for the public record.
+    ("/api/core/latest-docket-entry/", ("get_public_latest_docket_entry",)),
 )
 
 # Reads that can fall back to a browser on a public site (spec A3, rung 4).
 # The value names a playbook in back-end/services/browser-task-runner, which
 # fixes the site and makes the session read-only. Offered only when our own
 # lookup broke - never to get around an access or sign-in refusal.
-_BROWSER_PLAYBOOKS: tuple[tuple[str, str], ...] = (("/api/core/latest-docket-entry/", "courtlistener_public_docket"),)
+# Empty since 2026-11-22: CourtListener answers a headless browser with 403, so
+# the docket read falls back to its REST API (an alternate above) instead.
+_BROWSER_PLAYBOOKS: tuple[tuple[str, str], ...] = ()
 _BROWSER_FALLBACK_CLASSES = frozenset({"transient", "internal", "not_found"})
 
 # POST endpoints that only read. Kept deliberately short: a path belongs here
@@ -1265,6 +1269,17 @@ async def get_latest_docket_entry(ctx: Context, case_id: str, app_id: str | None
 
 @mcp.tool(
     description=(
+        "Fetch a case's most recent docket entry from the public record (CourtListener's API). "
+        "Use only when get_latest_docket_entry failed, and say the answer came from CourtListener. "
+        "Only cases imported from CourtListener have a public docket."
+    )
+)
+async def get_public_latest_docket_entry(ctx: Context, case_id: str, app_id: str | None = None) -> dict:
+    return await _get(ctx, "/api/public-docket/latest-entry/", {"caseId": case_id, "appId": app_id})
+
+
+@mcp.tool(
+    description=(
         "Retrieve a billing summary for a case. Returns billableTaskCount and summaryText, "
         "where summaryText is a JSON-encoded digest with billingHeader, overview metrics, "
         "topBillers, topTasks, missedOpportunities (completed work not billed, e.g. no hourly "
@@ -1520,7 +1535,7 @@ async def retrieve_case_individuals(ctx: Context, case_id: str, app_id: str) -> 
     query = """
     query CaseIndividuals($appId: String!, $caseId: String!) {
       authenticatedCaseIndividualsByCaseId(appId: $appId, caseId: $caseId) {
-        displayName entityType roles groupForCase(caseId: $caseId)
+        displayName entityType rolesForCase(caseId: $caseId) groupForCase(caseId: $caseId)
       }
     }
     """

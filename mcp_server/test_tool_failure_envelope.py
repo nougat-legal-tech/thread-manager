@@ -428,6 +428,7 @@ def test_every_alternate_is_a_real_read_only_search_tool_and_never_itself():
         "/api/core/integrations/sharepoint/agent/documents/search": "search_sharepoint_documents",
         "/api/core/integrations/relativity/documents/search": "search_relativity_documents",
         "/api/core/rag-query-proxy/": "search_documents",
+        "/api/core/latest-docket-entry/": "get_latest_docket_entry",
     }
     assert {prefix for prefix, _tools in server._ALTERNATE_READ_SOURCES} == set(source_tool_by_prefix)  # noqa: SLF001
     for prefix, tools in server._ALTERNATE_READ_SOURCES:  # noqa: SLF001
@@ -435,13 +436,44 @@ def test_every_alternate_is_a_real_read_only_search_tool_and_never_itself():
         assert source_tool_by_prefix[prefix] not in tools
         for tool in tools:
             assert callable(getattr(server, tool)), tool
-            assert tool.startswith("search_"), tool
+            # Every alternate is a read: a search, or the public-record docket read.
+            assert tool.startswith("search_") or tool == "get_public_latest_docket_entry", tool
+
+
+def test_a_broken_docket_lookup_offers_the_public_record_api(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), "/api/latest-docket-entry/"))  # noqa: SLF001
+
+    recovery = _envelope(raised.value)["recovery"]
+    assert recovery["alternates"] == ["get_public_latest_docket_entry"]
+    assert "get_public_latest_docket_entry" in recovery["guidance"]
+
+
+def test_the_public_record_read_is_not_its_own_alternate(monkeypatch):
+    _client_returning(monkeypatch, _response("GET", 503, json={"detail": "down"}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), "/api/public-docket/latest-entry/"))  # noqa: SLF001
+
+    assert "alternates" not in _envelope(raised.value)["recovery"]
 
 
 # --- Browser fallback for public records (spec A3, rung 4) --------------------
 
 
+# No playbook is live (CourtListener refuses a headless browser), so these tests
+# install one to check the rules that still apply when one is added.
+_TEST_PLAYBOOKS = (("/api/core/latest-docket-entry/", "courtlistener_public_docket"),)
+
+
+def test_no_browser_playbook_is_live():
+    assert server._BROWSER_PLAYBOOKS == ()  # noqa: SLF001
+
+
 def test_a_broken_public_docket_lookup_names_the_browser_playbook(monkeypatch):
+    monkeypatch.setattr(server, "_BROWSER_PLAYBOOKS", _TEST_PLAYBOOKS)
     _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
 
     with pytest.raises(httpx.HTTPStatusError) as raised:
@@ -453,6 +485,7 @@ def test_a_broken_public_docket_lookup_names_the_browser_playbook(monkeypatch):
 
 
 def test_the_browser_is_never_offered_around_an_access_or_sign_in_refusal(monkeypatch):
+    monkeypatch.setattr(server, "_BROWSER_PLAYBOOKS", _TEST_PLAYBOOKS)
     for status in (401, 403, 400):
         _client_returning(monkeypatch, _response("GET", status, json={"detail": "no"}))
         with pytest.raises(httpx.HTTPStatusError) as raised:
@@ -461,6 +494,7 @@ def test_the_browser_is_never_offered_around_an_access_or_sign_in_refusal(monkey
 
 
 def test_other_reads_and_all_writes_get_no_browser(monkeypatch):
+    monkeypatch.setattr(server, "_BROWSER_PLAYBOOKS", _TEST_PLAYBOOKS)
     _client_returning(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
     with pytest.raises(httpx.HTTPStatusError) as other_read:
         _run(server._get(object(), "/api/core/integrations/clio/matters/"))  # noqa: SLF001
@@ -470,4 +504,3 @@ def test_other_reads_and_all_writes_get_no_browser(monkeypatch):
 
     assert "browserPlaybook" not in _envelope(other_read.value)["recovery"]
     assert "browserPlaybook" not in _envelope(write.value)["recovery"]
-    assert {name for _prefix, name in server._BROWSER_PLAYBOOKS} == {"courtlistener_public_docket"}  # noqa: SLF001
