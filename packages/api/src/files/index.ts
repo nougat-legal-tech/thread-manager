@@ -17,6 +17,7 @@ export * from './provision';
 export * from './upload/routing';
 export * from './upload/diagnostics';
 export * from './upload/fallback';
+export * from './upload/textReadyPreview';
 export * from './rag';
 export * from './rag/context';
 export * from './rag/search';

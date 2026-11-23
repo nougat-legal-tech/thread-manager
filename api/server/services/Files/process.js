@@ -37,6 +37,8 @@ const {
   getFileExtractionLogDetails,
   getUploadExtractedTextPlan,
   resolveUploadFallbackText,
+  buildTextReadyPreview,
+  isTextReadySpreadsheetUpload,
   UPLOAD_EXTRACTED_TEXT_PLANS,
   MAX_STORED_EXTRACTED_TEXT_BYTES,
   inspectContent,
@@ -1151,6 +1153,34 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     filters: appConfig?.filters,
   });
 
+  let textReadyPreview;
+  if (
+    metadata.text_ready === 'true' &&
+    messageAttachment &&
+    effectiveToolResource === EToolResources.file_search &&
+    isTextReadySpreadsheetUpload({ filename: file.originalname })
+  ) {
+    const extracted = await extractInspectableFileText({
+      filters: appConfig?.filters,
+      extract: () => parseText({ req, file, file_id, allowNativeFallback: false }),
+    });
+    if (!extracted?.text) {
+      throw new Error('The attached spreadsheet could not be read for this workflow.');
+    }
+    assertExtractedTextInspectable({ filters: appConfig?.filters, text: extracted.text });
+    if (Buffer.byteLength(extracted.text, 'utf8') > MAX_STORED_EXTRACTED_TEXT_BYTES) {
+      throw new Error(
+        `Extracted text from "${file.originalname}" exceeds the ${MAX_STORED_EXTRACTED_TEXT_BYTES / megabyte}MB limit. Try a shorter spreadsheet.`,
+      );
+    }
+    textReadyPreview = buildTextReadyPreview(extracted.text);
+    if (textReadyPreview.truncated) {
+      throw new Error(
+        'The spreadsheet text exceeds the complete-text limit for lead follow-up. Shorten the spreadsheet and upload it again.',
+      );
+    }
+  }
+
   // Dual storage pattern for RAG files: Storage + Vector DB
   let storageResult, embeddingResult;
   let storedType = file.mimetype;
@@ -1377,7 +1407,13 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     embeddingResult?.embedded === false
       ? 'Agent file uploaded; search indexing will retry when embedding quota is available'
       : 'Agent file uploaded and processed successfully',
-    result,
+    textReadyPreview
+      ? {
+          ...result,
+          text_ready_preview: textReadyPreview.text,
+          text_ready_truncated: textReadyPreview.truncated,
+        }
+      : result,
   );
 };
 

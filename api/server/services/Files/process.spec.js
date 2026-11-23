@@ -125,6 +125,11 @@ jest.mock('@librechat/api', () => {
     /** Grants both; these specs vary the capability set, not the role. */
     resolveToolRoleGrants: jest.fn(async () => ({ runCode: true, fileSearch: true })),
     parseText: jest.fn().mockResolvedValue({ text: '', bytes: 0 }),
+    buildTextReadyPreview: jest.fn((text) => ({
+      text: text.slice(0, 100_000),
+      truncated: text.length > 100_000,
+    })),
+    isTextReadySpreadsheetUpload: jest.fn(({ filename }) => /\.(csv|xlsx)$/i.test(filename ?? '')),
     /** Stores no fallback text unless a test opts in; its own rules are covered in packages/api. */
     resolveUploadFallbackText: jest.fn(async () => undefined),
     MAX_STORED_EXTRACTED_TEXT_BYTES: 15 * 1024 * 1024,
@@ -1244,6 +1249,73 @@ describe('processAgentFileUpload', () => {
           tool_resource: EToolResources.file_search,
         }),
       );
+    });
+
+    test('returns a bounded text preview for an explicitly requested spreadsheet message attachment', async () => {
+      setupStoredFileUpload();
+      const req = makeReq({
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ocrConfig: null,
+      });
+      req.file.originalname = 'pipeline.xlsx';
+      req.body.endpoint = EModelEndpoint.agents;
+      const { parseText } = require('@librechat/api');
+      parseText.mockResolvedValueOnce({ text: 'Lead,Email\nAlex,alex@example.com', bytes: 32 });
+
+      await processAgentFileUpload({
+        req,
+        res: mockRes,
+        metadata: {
+          ...makeMetadata(),
+          tool_resource: EToolResources.file_search,
+          message_file: 'true',
+          text_ready: 'true',
+        },
+      });
+
+      expect(parseText).toHaveBeenCalledWith({
+        req,
+        file: req.file,
+        file_id: 'file-uuid-123',
+        allowNativeFallback: false,
+      });
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text_ready_preview: 'Lead,Email\nAlex,alex@example.com',
+          text_ready_truncated: false,
+        }),
+      );
+      expect(db.createFile).toHaveBeenCalledWith(
+        expect.not.objectContaining({ text: 'Lead,Email\nAlex,alex@example.com' }),
+        true,
+      );
+    });
+
+    test('rejects a truncated spreadsheet preview before persisting the upload', async () => {
+      setupStoredFileUpload();
+      const req = makeReq({
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ocrConfig: null,
+      });
+      req.file.originalname = 'large-pipeline.xlsx';
+      req.body.endpoint = EModelEndpoint.agents;
+      const { parseText } = require('@librechat/api');
+      parseText.mockResolvedValueOnce({ text: 'lead,email\n'.repeat(10_001), bytes: 110_011 });
+
+      await expect(
+        processAgentFileUpload({
+          req,
+          res: mockRes,
+          metadata: {
+            ...makeMetadata(),
+            tool_resource: EToolResources.file_search,
+            message_file: 'true',
+            text_ready: 'true',
+          },
+        }),
+      ).rejects.toThrow('exceeds the complete-text limit');
+
+      expect(db.createFile).not.toHaveBeenCalled();
     });
 
     test('applies all-data retention metadata to persistent agent file-search files', async () => {
