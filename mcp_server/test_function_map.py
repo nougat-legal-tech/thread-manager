@@ -47,6 +47,44 @@ def test_function_map_returns_category_table_of_contents_then_selected_schemas()
     assert all(record["name"] != "browse_function_map" for record in selected["functions"])
 
 
+def test_recent_company_ops_calls_remain_navigable_without_practice_mcp_handlers():
+    index = _run_immediate(server.browse_function_map(object()))
+    category_records = {}
+    navigable_names = set()
+    for category in index["categories"]:
+        selected = _run_immediate(server.browse_function_map(object(), category["id"]))
+        category_records.update({record["name"]: record for record in selected["functions"]})
+        for record in selected["functions"]:
+            navigable_names.add(record["name"])
+            navigable_names.update(
+                alias["name"]
+                for alias in record.get("callerAliases", [])
+                if isinstance(alias, dict) and alias.get("name")
+            )
+            navigable_names.update(
+                alias_name
+                for alias_name in record.get("dispatchTargetsByAlias", {})
+                if alias_name
+            )
+
+    observed_calls = {
+        "generate_financing_doc",
+        "edit_company_deadlines",
+        "diligence_room_query",
+        "retrieve_company_action_items",
+    }
+    assert observed_calls <= navigable_names, sorted(observed_calls - navigable_names)
+
+    registered_names = {tool.name for tool in server.mcp._tool_manager.list_tools()}
+    # The old practice names remain discoverable as map compatibility/orchestration
+    # records; Django's canonical MCP tools own execution.
+    assert observed_calls.isdisjoint(registered_names)
+    assert category_records["diligence_room_query"]["mcpCallable"] is False
+    assert category_records["generate_financing_doc"]["mcpCallable"] is False
+    assert {"intent_handler", "chat_proxy"} <= set(category_records["diligence_room_query"]["surfaces"])
+    assert {"intent_handler", "chat_proxy"} <= set(category_records["generate_financing_doc"]["surfaces"])
+
+
 def test_case_task_aliases_use_verified_shared_operation_ids():
     selected = _run_immediate(server.browse_function_map(object(), "case_management"))
     records = {record["name"]: record for record in selected["functions"]}

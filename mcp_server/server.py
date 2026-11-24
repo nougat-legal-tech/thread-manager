@@ -18,11 +18,13 @@ normal JWT auth applies.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import secrets
 from typing import Any
+from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -487,7 +489,50 @@ async def _checked(method: str, path: str, send: Any) -> httpx.Response:
             raise type(exc)(message, request=getattr(exc, "_request", None)) from exc
 
 
+def _meeting_retention_context(ctx: Context) -> tuple[str, str] | None:
+    request_context = getattr(ctx, "request_context", None)
+    request = getattr(request_context, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    grant = str(
+        headers.get("x-vienna-meeting-retention")
+        or headers.get("X-Vienna-Meeting-Retention")
+        or ""
+    ).strip()
+    if not grant:
+        return None
+    if len(grant) > 8192:
+        raise ValueError("Meeting tool authorization grant is invalid")
+    try:
+        encoded_claims = grant.split(".")[1]
+        encoded_claims += "=" * (-len(encoded_claims) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(encoded_claims.encode("ascii")))
+    except (IndexError, UnicodeError, ValueError, TypeError) as exc:
+        raise ValueError("Meeting tool authorization grant is invalid") from exc
+    session_id = claims.get("sessionId") if isinstance(claims, dict) else None
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("Meeting tool authorization grant is invalid")
+    return grant, session_id.strip()
+
+
+async def _authorize_meeting_tool(ctx: Context) -> None:
+    """Ask Django to validate the signed meeting turn before any MCP tool reaches an API."""
+    meeting_context = _meeting_retention_context(ctx)
+    if meeting_context is None:
+        return
+    grant, session_id = meeting_context
+    path = f"/api/core/meeting-sessions/internal/{quote(session_id, safe='')}/agent-tool-authorization/"
+    async with _client(_token(ctx)) as client:
+        await _checked(
+            "POST",
+            path,
+            lambda: client.post(path, headers={"X-Vienna-Meeting-Retention": grant}),
+        )
+
+
 async def _get(ctx: Context, path: str, params: dict | None = None) -> dict[str, Any]:
+    await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
         query = {k: v for k, v in (params or {}).items() if v is not None}
@@ -496,6 +541,7 @@ async def _get(ctx: Context, path: str, params: dict | None = None) -> dict[str,
 
 
 async def _post(ctx: Context, path: str, body: dict) -> dict[str, Any]:
+    await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
         r = await _checked("POST", resolved_path, lambda: c.post(resolved_path, content=json.dumps(body)))
@@ -517,6 +563,7 @@ def _seriesai_litigation_block(app_id: str | None, operation: str) -> dict[str, 
 
 
 async def _patch(ctx: Context, path: str, body: dict) -> dict[str, Any]:
+    await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         path = _resolve_path(path)
         r = await _checked("PATCH", path, lambda: c.patch(path, content=json.dumps(body)))
@@ -524,6 +571,7 @@ async def _patch(ctx: Context, path: str, body: dict) -> dict[str, Any]:
 
 
 async def _delete(ctx: Context, path: str, params: dict | None = None) -> dict[str, Any]:
+    await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
         query = {k: v for k, v in (params or {}).items() if v is not None}
@@ -1535,7 +1583,7 @@ async def retrieve_case_individuals(ctx: Context, case_id: str, app_id: str) -> 
     query = """
     query CaseIndividuals($appId: String!, $caseId: String!) {
       authenticatedCaseIndividualsByCaseId(appId: $appId, caseId: $caseId) {
-        displayName entityType rolesForCase(caseId: $caseId) groupForCase(caseId: $caseId)
+        displayName entityType rolesForCase(caseId: $caseId) counselForCase(caseId: $caseId) groupForCase(caseId: $caseId)
       }
     }
     """
@@ -2646,10 +2694,12 @@ async def search_slack_messages(
 @mcp.tool(
     description=(
         "Read recent messages from one Slack channel, newest first, with sender names resolved. Pass "
-        "channel_id, or channel_name with or without the leading '#'. days is 1-365 (default 7) and "
-        "limit 1-200 (default 50). Check the returned status: only status=not_member means the "
+        "channel_id, or channel_name with or without the leading '#'. When days is omitted, return the "
+        "newest messages regardless of age; pass days (1-365) only to limit the lookback window. "
+        "limit is 1-200 (default 50). Check the returned status: only status=not_member means the "
         "Vienna bot needs inviting. A successful result with an empty messages list means no messages "
-        "matched the requested time range; an unavailable tool result does not establish membership."
+        "were returned for that channel and any explicit time range; an unavailable tool result does "
+        "not establish membership."
     ),
 )
 async def get_slack_channel_messages(
@@ -3956,12 +4006,23 @@ async def generate_case_bill(ctx: Context, case_id: str, billing_period: str | N
 )
 async def export_firm_hours(
     ctx: Context,
-    period: str | None = None,
+    period: (
+        Literal[
+            "last_week",
+            "this_week",
+            "next_week",
+            "two_weeks",
+            "biweekly",
+            "month",
+            "last_month",
+        ]
+        | None
+    ) = None,
     billing_week_start: str | None = None,
     billing_week_end: str | None = None,
     billing_timezone: str | None = None,
-    output_format: str | None = None,
-    delivery_mode: str | None = None,
+    output_format: Literal["csv", "pdf", "both"] | None = None,
+    delivery_mode: Literal["combined", "per_case"] | None = None,
     case_ids: list[str] | None = None,
 ) -> dict:
     payload: dict[str, object] = {}
@@ -4176,7 +4237,7 @@ async def assign_user_to_case(
 
 
 @mcp.tool(description="Add an existing case to a workspace or create a new matter when no docket match exists.")
-async def add_case(
+async def add_case(  # noqa: C901 - preserve explicit existing case and new matter paths.
     ctx: Context,
     docket_id: str | None = None,
     role: str | None = None,
@@ -4186,6 +4247,10 @@ async def add_case(
     target_user_id: str | None = None,
     target_user_email: str | None = None,
     app_id: str | None = None,
+    origin_channel: Literal["slack", "teams", "email", "chat", "whatsapp"] | None = None,
+    origin_channel_id: str | None = None,
+    origin_thread_ts: str | None = None,
+    origin_signature: str | None = None,
 ) -> dict:
     payload: dict[str, object] = {}
     if docket_id is not None:
@@ -4204,6 +4269,14 @@ async def add_case(
         payload["targetUserEmail"] = target_user_email
     if app_id is not None:
         payload["appId"] = app_id
+    if origin_channel is not None:
+        payload["originChannel"] = origin_channel
+    if origin_channel_id is not None:
+        payload["originChannelId"] = origin_channel_id
+    if origin_thread_ts is not None:
+        payload["originThreadTs"] = origin_thread_ts
+    if origin_signature is not None:
+        payload["originSignature"] = origin_signature
     return await _post(ctx, "/api/add-case/", payload)
 
 
