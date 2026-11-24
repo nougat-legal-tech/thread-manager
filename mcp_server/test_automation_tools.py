@@ -139,6 +139,57 @@ def test_list_passes_the_scope_filter(calls):
     assert calls == [("GET", "/api/core/automations", {"scopeType": "firm"})]
 
 
+def test_check_back_sets_one_personal_read_only_follow_up_without_confirmation(calls):
+    _run(
+        server.check_back(
+            object(),
+            when="in 2 hours",
+            note="Check whether the court entered the order and report the docket text.",
+            only_if="the docket still has no order",
+            app_id="2",
+            case_id="case-1",
+            time_zone="America/New_York",
+        )
+    )
+
+    assert calls == [
+        (
+            "POST",
+            "/api/core/check-backs",
+            {
+                "when": "in 2 hours",
+                "note": "Check whether the court entered the order and report the docket text.",
+                "condition": "the docket still has no order",
+                "appId": "2",
+                "caseId": "case-1",
+                "timezone": "America/New_York",
+            },
+        )
+    ]
+
+
+def test_check_back_lists_and_cancels_only_the_requested_item(calls):
+    _run(server.check_back(object()))
+    _run(server.check_back(object(), cancel="cb/one"))
+    _run(server.check_back(object(), cancel="all"))
+
+    assert calls == [
+        ("GET", "/api/core/check-backs", None),
+        ("DELETE", "/api/core/check-backs/cb%2Fone", None),
+        ("DELETE", "/api/core/check-backs/all", None),
+    ]
+
+
+def test_check_back_rejects_partial_schedule_without_a_request(calls):
+    result = _run(server.check_back(object(), note="Check the docket later"))
+
+    assert result == {
+        "error": "invalid_check_back",
+        "message": "Setting a check-back needs both when and note.",
+    }
+    assert calls == []
+
+
 def test_a_member_can_mute_and_unmute_without_a_second_confirmation(calls):
     _run(server.manage_automation(object(), "auto-1", "mute"))
     _run(server.manage_automation(object(), "auto-1", "unmute"))

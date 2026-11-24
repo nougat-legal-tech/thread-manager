@@ -113,6 +113,8 @@ _CATEGORY_BY_ID = {category["id"]: category for category in FUNCTION_CATEGORIES}
 _FUNCTION_CATEGORY_OVERRIDES = {
     # The case prefix is a resource scope; editing important dates is scheduling.
     "edit_case_important_dates": "scheduling",
+    # One-time future check-backs are scheduled follow-ups.
+    "check_back": "scheduling",
     "prepare_diligence_room": "company_operations",
 }
 

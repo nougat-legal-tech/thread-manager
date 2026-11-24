@@ -1203,6 +1203,21 @@ MCP_FUNCTION_METADATA["manage_automation"] = {
         "firm; say so instead of saying it is scheduled."
     ),
 }
+MCP_FUNCTION_METADATA["check_back"] = {
+    "trustedScopeBindings": {"case_id": "caseId", "app_id": "appId"},
+    # It schedules a run, so it is never allowed inside an unattended run.
+    "mutatesState": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "A later look is check_back; work that repeats is an automation. Never promise to follow up later unless "
+        "you set a check-back in the same turn, then tell the person what you set and when (relay the returned "
+        "text). No confirmation is needed: the later run can only read and report to this person. With no "
+        "arguments it lists the waiting check-backs; cancel takes an id or all."
+    ),
+}
 MCP_FUNCTION_METADATA["create_workflow_run"] = {
     "mutatesState": True,
     "sendsExternalMessage": False,
@@ -1448,6 +1463,22 @@ MCP_FUNCTION_METADATA["import_cap_table_file"] = {
         "Import only the exact user-supplied spreadsheet after explicit confirmation. Supply its staged S3 "
         "reference from trusted attachment context; never invent a bucket or key. Auto mode commits only "
         "complete files and otherwise returns the importer's completion question without writing."
+    ),
+}
+
+MCP_FUNCTION_METADATA["update_user_hourly_rate"] = {
+    "operationIds": ["update-user-hourly-rate"],
+    "surfaces": ["chat_proxy", "intent_handler"],
+    "requiresCaseId": False,
+    "mutatesState": True,
+    "requiresExplicitConfirmation": True,
+    "sendsExternalMessage": False,
+    "sendsUserEmail": False,
+    "startsAsyncWorkflow": False,
+    "returnsInlineResult": True,
+    "invocationGuidance": (
+        "Update only the authenticated user's own hourly rate. Require the user's explicit confirmation before "
+        "saving the proposed amount; never change another user's rate or treat a preview request as approval."
     ),
 }
 
@@ -2439,7 +2470,13 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
             "This read-only IntentHandler request is routed through ChatProxy. Use AI to read "
             "get_seriesai_company_cap_table from this authenticated company_operations category "
             "and report only the returned holder names, share counts, and ownership percentages. "
-            "Do not infer missing holders or percentages."
+            "Do not infer missing holders, share counts, or percentages. For a hypothetical issuance "
+            "preview, calculate pro-forma ownership only when the returned share counts and denominator "
+            "support the calculation, label it as hypothetical, and do not create or record an issuance. "
+            "For approval requirements, rely only on governance documents retrieved through an available "
+            "authorized company-scoped source; identify the supporting source. If no such source or "
+            "applicable approval evidence is available, say the requirement cannot be verified rather "
+            "than asserting that approval is or is not required."
         ),
     },
     {
@@ -2729,24 +2766,22 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
         if existing is None:
             schema = record.get("inputSchema")
             required = schema.get("required", []) if isinstance(schema, dict) else []
-            record.update(
-                {
-                    "functionId": name,
-                    "categoryId": categorize_function_name(name),
-                    "operationIds": [name],
-                    "requiredInputs": list(required) if isinstance(required, list) else [],
-                    "surfaces": ["mcp"],
-                    "metadataStatus": "mcp_schema_only",
-                    "mcpCallable": True,
-                }
-            )
+            record.setdefault("functionId", name)
+            record.setdefault("categoryId", categorize_function_name(name))
+            record.setdefault("operationIds", [name])
+            record.setdefault("requiredInputs", list(required) if isinstance(required, list) else [])
+            record["surfaces"] = list(dict.fromkeys([*(record.get("surfaces") or []), "mcp"]))
+            record.setdefault("metadataStatus", "mcp_schema_only")
+            record.setdefault("mcpCallable", True)
             if name.startswith(("get_seriesai_", "list_seriesai_")):
                 # These are the existing company-workspace read tools. Keep
                 # their app restriction in the universal map so discovery can
                 # filter them before attaching schemas to a caller.
                 record["appIds"] = ["3", "4", "5"]
             if isinstance(schema, dict):
-                record["inputSchemasBySurface"] = {"mcp": deepcopy(schema)}
+                schemas_by_surface = record.setdefault("inputSchemasBySurface", {})
+                if isinstance(schemas_by_surface, dict):
+                    schemas_by_surface.setdefault("mcp", deepcopy(schema))
             merged[name] = record
             continue
         schema = record.get("inputSchema")

@@ -8,16 +8,29 @@ const MAX_GRANT_AGE_SECONDS = 5 * 60;
 const MAX_RETENTION_SECONDS = 24 * 60 * 60;
 const MEETING_TURN_BODY_FIELDS = new Set([
   'input',
+  'text',
   'conversationId',
+  'conversation_id',
   'runId',
+  'run_id',
   'channel',
   'sessionKey',
+  'session_key',
   'idempotencyKey',
+  'idempotency_key',
   'isTemporary',
   'appId',
   'caseId',
   'metadata',
   'stream',
+  // Django's authenticated ChatRuns normalizer adds these server-owned
+  // agent/runtime fields before forwarding the signed meeting turn.
+  'agent_id',
+  'userId',
+  'instructions',
+  'model_parameters',
+  'additionalModelRequestFields',
+  'juristaiToolContext',
 ]);
 const MEETING_RESUME_BODY_FIELDS = new Set([
   'conversationId',
@@ -31,6 +44,8 @@ const MEETING_METADATA_FIELDS = new Set([
   'meetingTurnId',
   'meetingTranscriptRevision',
   'source',
+  'architectureTraceId',
+  'userId',
 ]);
 const MEETING_CHECKPOINT_COLLECTION = 'vienna_meeting_agent_checkpoints';
 const MEETING_CHECKPOINT_WRITES_COLLECTION = 'vienna_meeting_agent_checkpoint_writes';
@@ -92,6 +107,8 @@ function applyViennaMeetingRetention(request, response, next) {
   const turnId = String(claims.turnId ?? '');
   const transcriptRevision = String(claims.transcriptRevision ?? '');
   const approvalActionId = String(claims.approvalActionId ?? '');
+  const actorUserId = String(claims.actorUserId ?? '');
+  const requestId = String(request.get('x-request-id') ?? '');
   const isResumeRequest = request.path === '/resume';
   const allowedBodyFields = isResumeRequest ? MEETING_RESUME_BODY_FIELDS : MEETING_TURN_BODY_FIELDS;
   const hasUnexpectedBodyField = Object.keys(body).some((key) => !allowedBodyFields.has(key));
@@ -112,6 +129,7 @@ function applyViennaMeetingRetention(request, response, next) {
     !claims.sub ||
     String(claims.sub) !== userId ||
     !claims.djangoUserId ||
+    !actorUserId ||
     !claims.conversationId ||
     String(claims.conversationId) !== conversationId ||
     String(claims.sessionId ?? '') !== conversationId ||
@@ -124,6 +142,22 @@ function applyViennaMeetingRetention(request, response, next) {
     (!isResumeRequest && String(metadata.meetingTurnId ?? '') !== turnId) ||
     (!isResumeRequest && !/^[0-9a-f]{64}$/.test(transcriptRevision)) ||
     (!isResumeRequest && String(metadata.meetingTranscriptRevision ?? '') !== transcriptRevision) ||
+    (!isResumeRequest && String(body.userId ?? '') !== actorUserId) ||
+    (!isResumeRequest && String(metadata.userId ?? '') !== actorUserId) ||
+    (!isResumeRequest &&
+      metadata.architectureTraceId != null &&
+      String(metadata.architectureTraceId) !== requestId) ||
+    (!isResumeRequest &&
+      body.conversation_id != null &&
+      String(body.conversation_id) !== conversationId) ||
+    (!isResumeRequest && body.run_id != null && String(body.run_id) !== String(body.runId ?? '')) ||
+    (!isResumeRequest &&
+      body.session_key != null &&
+      String(body.session_key) !== String(body.sessionKey ?? '')) ||
+    (!isResumeRequest &&
+      body.idempotency_key != null &&
+      String(body.idempotency_key) !== String(body.idempotencyKey ?? '')) ||
+    (!isResumeRequest && body.text != null && String(body.text) !== String(body.input ?? '')) ||
     (!isResumeRequest &&
       String(body.sessionKey ?? body.session_key ?? '') !== `meeting:${conversationId}`) ||
     (!isResumeRequest &&

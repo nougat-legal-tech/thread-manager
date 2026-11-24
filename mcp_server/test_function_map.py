@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +24,114 @@ def _run_immediate(coroutine):
     finally:
         coroutine.close()
     raise AssertionError("Expected this provider-free MCP operation to complete immediately")
+
+
+def _meeting_grant(session_id="meeting/session-1"):
+    payload = base64.urlsafe_b64encode(json.dumps({"sessionId": session_id}).encode()).decode().rstrip("=")
+    return f"header.{payload}.signature"
+
+
+def test_meeting_retention_authorization_precedes_mcp_api_request(monkeypatch):
+    grant = _meeting_grant()
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(
+                headers={"authorization": "Bearer user-token", "x-vienna-meeting-retention": grant}
+            )
+        )
+    )
+    calls = []
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, path, *, headers):
+            calls.append(("POST", path, headers))
+            return object()
+
+        async def get(self, path, *, params):
+            calls.append(("GET", path, params))
+            return object()
+
+    class _Response:
+        @staticmethod
+        def json():
+            return {"status": "ok"}
+
+    async def checked(method, path, send):
+        calls.append(("checked", method, path))
+        await send()
+        return _Response()
+
+    monkeypatch.setattr(server, "_client", lambda _token: _Client())
+    monkeypatch.setattr(server, "_token", lambda _ctx: "Bearer user-token")
+    monkeypatch.setattr(server, "_checked", checked)
+
+    result = asyncio.run(server._get(ctx, "/api/core/company-operations/", {"app_id": "4"}))
+
+    assert result == {"status": "ok"}
+    assert calls == [
+        (
+            "checked",
+            "POST",
+            "/api/core/meeting-sessions/internal/meeting%2Fsession-1/agent-tool-authorization/",
+        ),
+        (
+            "POST",
+            "/api/core/meeting-sessions/internal/meeting%2Fsession-1/agent-tool-authorization/",
+            {"X-Vienna-Meeting-Retention": grant},
+        ),
+        ("checked", "GET", "/api/core/company-operations/"),
+        ("GET", "/api/core/company-operations/", {"app_id": "4"}),
+    ]
+
+
+def test_meeting_retention_denial_stops_mcp_api_request(monkeypatch):
+    grant = _meeting_grant()
+    ctx = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"x-vienna-meeting-retention": grant})
+        )
+    )
+    calls = []
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, path, *, headers):
+            calls.append(("POST", path, headers))
+            return object()
+
+        async def get(self, path, *, params):
+            calls.append(("GET", path, params))
+            return object()
+
+    async def checked(method, path, send):
+        calls.append(("checked", method, path))
+        await send()
+        if method == "POST":
+            raise PermissionError("meeting turn authorization denied")
+        raise AssertionError("the MCP API request must not proceed after authorization denial")
+
+    monkeypatch.setattr(server, "_client", lambda _token: _Client())
+    monkeypatch.setattr(server, "_token", lambda _ctx: None)
+    monkeypatch.setattr(server, "_checked", checked)
+
+    with pytest.raises(PermissionError, match="authorization denied"):
+        asyncio.run(server._get(ctx, "/api/core/company-operations/"))
+
+    assert len(calls) == 2
+    assert calls[0][1] == "POST"
+    assert "agent-tool-authorization" in calls[0][2]
+    assert calls[1][0] == "POST"
 
 
 def test_function_map_returns_category_table_of_contents_then_selected_schemas():
@@ -854,3 +964,20 @@ def test_inbox_mapping_guidance_keeps_provider_ids_internal():
     assert record["requiredInputs"] == ["caseId", "confirm"]
     assert "sender, subject, or date" in record["invocationGuidance"]
     assert "keep provider IDs internal" in record["invocationGuidance"]
+
+
+def test_hourly_rate_mcp_map_preserves_mutation_confirmation_metadata():
+    records = server.universal_function_records(
+        [{"name": "update_user_hourly_rate", "inputSchema": {"type": "object", "required": ["hourly_rate"]}}],
+        include_chat_run_records=False,
+    )
+    record = next(item for item in records if item["name"] == "update_user_hourly_rate")
+
+    assert record["operationIds"] == ["update-user-hourly-rate"]
+    assert record["metadataStatus"] == "mcp_schema_only"
+    assert record["mcpCallable"] is True
+    assert record["requiresCaseId"] is False
+    assert record["mutatesState"] is True
+    assert record["requiresExplicitConfirmation"] is True
+    assert record["returnsInlineResult"] is True
+    assert "authenticated user's own hourly rate" in record["invocationGuidance"]

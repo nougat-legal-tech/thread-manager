@@ -4,6 +4,7 @@ const applyViennaMeetingRetention = require('./viennaMeetingRetention');
 const SECRET = 'vienna-meeting-retention-test-secret';
 const OWNER_ID = '0123456789abcdef01234567';
 const DJANGO_OWNER_ID = 'owner-123';
+const ACTOR_USER_ID = 'cognito-user-123';
 const CONVERSATION_ID = 'meeting-123';
 const TURN_ID = 'a'.repeat(64);
 const TRANSCRIPT_REVISION = 'b'.repeat(64);
@@ -16,6 +17,7 @@ const createGrant = (overrides = {}, secret = SECRET) =>
       aud: 'vienna-chatbot',
       sub: OWNER_ID,
       djangoUserId: DJANGO_OWNER_ID,
+      actorUserId: ACTOR_USER_ID,
       conversationId: CONVERSATION_ID,
       sessionId: CONVERSATION_ID,
       turnId: TURN_ID,
@@ -37,14 +39,25 @@ const createGrant = (overrides = {}, secret = SECRET) =>
     { algorithm: 'HS256' },
   );
 
-const invokeRetention = ({ token, body = {}, userId = OWNER_ID, config, path = '/' } = {}) => {
+const invokeRetention = ({
+  token,
+  body = {},
+  userId = OWNER_ID,
+  config,
+  path = '/',
+  requestId = 'meeting-request-1',
+} = {}) => {
   const req = {
     body,
     path,
     user: { id: userId },
     config,
     get: jest.fn((headerName) =>
-      headerName.toLowerCase() === 'x-vienna-meeting-retention' ? token : undefined,
+      headerName.toLowerCase() === 'x-vienna-meeting-retention'
+        ? token
+        : headerName.toLowerCase() === 'x-request-id'
+          ? requestId
+          : undefined,
     ),
   };
   const res = {
@@ -71,11 +84,14 @@ const meetingBody = (overrides = {}) => ({
   caseId: 'case-123',
   sessionKey: `meeting:${CONVERSATION_ID}`,
   idempotencyKey: `meeting:${TURN_ID}`,
+  userId: ACTOR_USER_ID,
   metadata: {
     meetingSessionId: CONVERSATION_ID,
     meetingTurnId: TURN_ID,
     meetingTranscriptRevision: TRANSCRIPT_REVISION,
     source: 'vienna_meeting',
+    architectureTraceId: 'meeting-request-1',
+    userId: ACTOR_USER_ID,
   },
   ...overrides,
 });
@@ -132,6 +148,55 @@ describe('Vienna meeting retention grant', () => {
       expiredAt: new Date((NOW + 24 * 60 * 60) * 1000),
       suppressLangfuseTracing: true,
     });
+  });
+
+  test('accepts the normalized Django meeting payload with its authorized tool context', () => {
+    const requestId = 'meeting-trace-1';
+    const body = {
+      ...meetingBody(),
+      input: 'Vienna, can you research this?',
+      text: 'Vienna, can you research this?',
+      runId: 'run-123',
+      run_id: 'run-123',
+      conversation_id: CONVERSATION_ID,
+      idempotency_key: `meeting:${TURN_ID}`,
+      session_key: `meeting:${CONVERSATION_ID}`,
+      userId: ACTOR_USER_ID,
+      agent_id: 'agent-vienna',
+      model_parameters: {},
+      additionalModelRequestFields: {},
+      instructions: 'Use Vienna tools for direct questions.',
+      juristaiToolContext: {
+        user: { userId: ACTOR_USER_ID, appId: '2' },
+        availableTools: [{ name: 'search_documents', categoryId: 'documents_research' }],
+      },
+      metadata: {
+        ...meetingBody().metadata,
+        architectureTraceId: requestId,
+        userId: ACTOR_USER_ID,
+      },
+    };
+    const { req, next, res } = invokeRetention({
+      token: createGrant(),
+      body,
+      path: '/meeting-turn',
+      requestId,
+    });
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(req._agentEventBindingRetention.isTemporary).toBe(true);
+  });
+
+  test('rejects a normalized meeting payload whose authenticated actor differs from the signed grant', () => {
+    const { next, res } = invokeRetention({
+      token: createGrant(),
+      body: meetingBody({ userId: 'different-actor' }),
+    });
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'invalid_meeting_retention_binding' });
   });
 
   test('accepts an approval continuation only for its signed action and session', () => {

@@ -489,17 +489,30 @@ async def _checked(method: str, path: str, send: Any) -> httpx.Response:
             raise type(exc)(message, request=getattr(exc, "_request", None)) from exc
 
 
+_REQUIRE_TRUSTED_APPROVAL_HEADER = os.getenv("MCP_REQUIRE_TRUSTED_APPROVAL_HEADER", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
+def _harness_confirmed_approval(ctx: Context) -> bool:
+    """True when the calling harness, not the model, asserts the person confirmed."""
+    request_context = getattr(ctx, "request_context", None)
+    request = getattr(request_context, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return False
+    return str(headers.get("x-vienna-trusted-approval") or "").strip().lower() == "true"
+
+
 def _meeting_retention_context(ctx: Context) -> tuple[str, str] | None:
     request_context = getattr(ctx, "request_context", None)
     request = getattr(request_context, "request", None)
     headers = getattr(request, "headers", None)
     if headers is None:
         return None
-    grant = str(
-        headers.get("x-vienna-meeting-retention")
-        or headers.get("X-Vienna-Meeting-Retention")
-        or ""
-    ).strip()
+    grant = str(headers.get("x-vienna-meeting-retention") or headers.get("X-Vienna-Meeting-Retention") or "").strip()
     if not grant:
         return None
     if len(grant) > 8192:
@@ -5471,6 +5484,18 @@ async def manage_workflow_action(
         raise ValueError("operation must be propose, approve, reject, execute, or rollback")
     if normalized_operation in {"approve", "rollback"} and approved is not True:
         raise ValueError("trusted explicit user approval is required for this operation")
+    if (
+        normalized_operation in {"approve", "rollback"}
+        and _REQUIRE_TRUSTED_APPROVAL_HEADER
+        and not _harness_confirmed_approval(ctx)
+    ):
+        # ``approved`` is a tool argument, so the model can set it. Only the
+        # calling harness can set a request header, and it does so after the
+        # person has actually confirmed.
+        raise ValueError(
+            "This step needs the person's own confirmation. Show them the preview and ask them to approve it; "
+            "it cannot be approved from a tool call."
+        )
     body = {
         key: value
         for key, value in {
@@ -5631,6 +5656,53 @@ async def manage_automation(
     if action == "delete":
         return await _delete(ctx, path)
     return await _post(ctx, f"{path}/{action}", {})
+
+
+# Agent-set check-backs (docs/specs/vienna-openmausbot/42; description adapted
+# from OpenMausBot, Apache-2.0). No confirmation step: the run a check-back
+# schedules is the unattended read-only run, and Django stores it as a
+# one-time personal automation the person can see and delete.
+@mcp.tool(
+    description=(
+        "Come back to this later on your own; no one is asked. Use it when the work needs a later look at a known "
+        "time (see whether a reply came, whether a filing was entered, whether a task was done). With no arguments "
+        'it lists the check-backs waiting for this person; cancel takes an id or "all". Something to do once, now, '
+        "is not a check-back; recurring work is an automation. When you come back you can read and report, not "
+        "send or change anything on your own, and you will not see this conversation: the result is sent to the "
+        'person. when: "in 2 hours", "in 3 business days" (the person\'s time zone) or an ISO time such as '
+        "2026-11-27T09:00:00-05:00, from 5 minutes to 90 days ahead. note: what to check then and what done looks "
+        "like, in enough detail to act on without this conversation's latest messages. only_if: act only if this "
+        "holds then. app_id: the workspace the user is in. case_id: the matter, when the check is about one. Never "
+        "promise to follow up later unless you set a check-back in the same turn, and tell the person what you "
+        "set and when."
+    )
+)
+async def check_back(
+    ctx: Context,
+    when: str | None = None,
+    note: str | None = None,
+    only_if: str | None = None,
+    cancel: str | None = None,
+    app_id: str | None = None,
+    case_id: str | None = None,
+    time_zone: str | None = None,
+) -> dict:
+    """Set, list or cancel the assistant's own one-time follow-ups."""
+    if cancel:
+        return await _delete(ctx, f"/api/core/check-backs/{quote(str(cancel), safe='')}")
+    if not when and not note:
+        return await _get(ctx, "/api/core/check-backs")
+    if not when or not note:
+        return {"error": "invalid_check_back", "message": "Setting a check-back needs both when and note."}
+    body = {
+        "when": when,
+        "note": note,
+        "condition": only_if,
+        "appId": app_id,
+        "caseId": case_id,
+        "timezone": time_zone,
+    }
+    return await _post(ctx, "/api/core/check-backs", {k: v for k, v in body.items() if v is not None})
 
 
 @mcp.tool(
