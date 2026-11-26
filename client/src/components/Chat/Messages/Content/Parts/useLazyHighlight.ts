@@ -99,6 +99,8 @@ export default function useLazyHighlight(
 ): React.ReactNode[] | null {
   const throttleMs = React.useContext(CodeHighlightThrottleContext);
   const currentKey = highlightKey(code, lang);
+  const latestInput = useRef({ code, lang });
+  latestInput.current = { code, lang };
   const hasInitialHighlight = Boolean(code && lowlightModule);
   const [highlighted, setHighlighted] = useState<HighlightState | null>(() =>
     hasInitialHighlight
@@ -131,17 +133,28 @@ export default function useLazyHighlight(
       setHighlighted(null);
     }
 
-    if (timer.current) {
+    /** A changed input should not restart an already scheduled throttle slot:
+     *  doing so turns throttling into a debounce and leaves long streams raw.
+     *  A changed throttle setting is different; reschedule the pending slot. */
+    if (timer.current && throttleChanged) {
       clearTimeout(timer.current);
       timer.current = null;
     }
 
     if (!code) {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
       lastRunAt.current = null;
       return;
     }
 
     if (lang === 'plaintext') {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
       setHighlighted({ key, nodes: [code] });
       return;
     }
@@ -150,24 +163,48 @@ export default function useLazyHighlight(
       timer.current = null;
       lastRunAt.current = now();
       const gen = ++generation.current;
+      const latest = latestInput.current;
+      const latestKey = highlightKey(latest.code, latest.lang);
+      if (!latest.code) {
+        return;
+      }
 
       if (lowlightModule) {
-        setHighlighted({ key, nodes: highlightCode(lowlightModule, code, lang) });
+        setHighlighted({
+          key: latestKey,
+          nodes: highlightCode(lowlightModule, latest.code, latest.lang),
+        });
         return;
       }
 
       loadLowlight()
         .then((mod) => {
           if (gen === generation.current) {
-            setHighlighted({ key, nodes: highlightCode(mod, code, lang) });
+            const current = latestInput.current;
+            if (current.code) {
+              setHighlighted({
+                key: highlightKey(current.code, current.lang),
+                nodes: highlightCode(mod, current.code, current.lang),
+              });
+            }
           }
         })
         .catch(() => {
           if (gen === generation.current) {
-            setHighlighted({ key, nodes: [code] });
+            const current = latestInput.current;
+            if (current.code) {
+              setHighlighted({
+                key: highlightKey(current.code, current.lang),
+                nodes: [current.code],
+              });
+            }
           }
         });
     };
+
+    if (timer.current && !throttleChanged) {
+      return;
+    }
 
     /** A clock that jumped backwards would otherwise hold the next highlight for a full window. */
     const elapsed = lastRunAt.current === null ? throttleMs : now() - lastRunAt.current;

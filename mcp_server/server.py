@@ -22,10 +22,15 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
+from contextvars import ContextVar
+from collections.abc import Awaitable
+from collections.abc import Callable
 from typing import Any
 from typing import Literal
 from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -89,7 +94,13 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 
+# The caller's token for this tool call, so a failure event can be recorded
+# as that caller (see "Durable failure events" below).
+_CALLER_TOKEN: ContextVar[str | None] = ContextVar("mcp_caller_token", default=None)
+
+
 def _client(token: str | None) -> httpx.AsyncClient:
+    _CALLER_TOKEN.set(token)
     headers: dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         scheme, separator, credentials = token.partition(" ")
@@ -241,6 +252,11 @@ _RECOVERY_BY_CLASS = {
     "reauth_required": ("ask_user", "Tell the user to sign in or reconnect the integration. Do not retry."),
     "permission_denied": ("ask_user", "Tell the user they lack access and who can grant it. Do not retry."),
     "internal": ("stop", "Do not retry. Report the failure and that nothing was changed."),
+    "upstream_provider": (
+        "stop",
+        "The connected system refused this and says retrying will not help. Do not retry; report it, "
+        "and use a listed alternate source if one is offered.",
+    ),
 }
 
 
@@ -335,6 +351,10 @@ def _tool_failure_envelope(
         failure_class, side_effect_state, detail = _transport_failure_classification(verb, exc, detail)
 
     failure_class, user_action = _failure_user_action(body, code, failure_class)
+    if failure_class == "transient" and isinstance(body, dict) and body.get("retryable") is False:
+        # The connector (Clio, Epona, ...) knows better than the status code:
+        # a gateway-looking answer it marks not retryable is not retried.
+        failure_class = "upstream_provider"
     if side_effect_state == "unknown":
         # A write that may have landed must never be classified as safely retryable.
         failure_class = "unknown_outcome"
@@ -387,6 +407,61 @@ def _recovery_for(failure_class: str, path: str, side_effect_state: str) -> dict
     return recovery
 
 
+# ---------------------------------------------------------------------------
+# Durable failure events (spec A5)
+#
+# Each failure (and each readback that found the write had landed) is also
+# sent to Django's POST /api/core/tool-failures/, as the same caller, without
+# waiting for the answer. Off unless MCP_TOOL_FAILURE_EVENTS is on. Only
+# classes, codes and the path go; Django masks ids in the path and never
+# stores detail. A failure to record is logged and otherwise ignored.
+# ---------------------------------------------------------------------------
+
+_FAILURE_EVENTS_ENABLED = os.getenv("MCP_TOOL_FAILURE_EVENTS", "false").strip().lower() in {"1", "true", "yes"}
+_FAILURE_EVENTS_PATH = "/api/core/tool-failures/"
+_PENDING_FAILURE_EVENTS: set[asyncio.Task] = set()
+
+
+def _failure_event(envelope: dict[str, Any], event_type: str) -> dict[str, Any]:
+    error = envelope["error"]
+    event = {
+        "eventType": event_type,
+        "surface": "mcp_sidecar",
+        "failureClass": error.get("class"),
+        "sideEffectState": error.get("sideEffectState"),
+        "httpStatus": error.get("httpStatus"),
+        "method": error.get("method"),
+        "attempts": error.get("attempts"),
+        "retryable": error.get("retryable"),
+        "readback": error.get("readback"),
+        "code": error.get("code") if isinstance(error.get("code"), str) and len(error["code"]) <= 80 else None,  # noqa: PLR2004
+        "recoveryAllowed": (envelope.get("recovery") or {}).get("allowed"),
+        "path": error.get("path"),
+    }
+    return {key: value for key, value in event.items() if value is not None}
+
+
+async def _send_failure_event(token: str | None, event: dict[str, Any]) -> None:
+    try:
+        async with _client(token) as c:
+            await c.post(_FAILURE_EVENTS_PATH, content=json.dumps(event))
+    except Exception:  # noqa: BLE001 - recording a failure must never cause one
+        _failure_logger.debug("mcp.tool_failure_event_not_recorded", exc_info=True)
+
+
+def _record_failure_event(envelope: dict[str, Any], event_type: str = "tool_failure") -> None:
+    """Fire and forget; does nothing outside a running event loop or when switched off."""
+    if not _FAILURE_EVENTS_ENABLED or str(envelope["error"].get("path") or "").startswith(_FAILURE_EVENTS_PATH):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_send_failure_event(_CALLER_TOKEN.get(), _failure_event(envelope, event_type)))
+    _PENDING_FAILURE_EVENTS.add(task)
+    task.add_done_callback(_PENDING_FAILURE_EVENTS.discard)
+
+
 def _tool_failure_message(summary: str, envelope: dict[str, Any]) -> str:
     """Render the failure for the model and record it once, at the only place every failure passes through."""
     error = envelope["error"]
@@ -401,6 +476,7 @@ def _tool_failure_message(summary: str, envelope: dict[str, Any]) -> str:
         error["method"],
         error["code"],
     )
+    _record_failure_event(envelope)
     return f"{summary}\n{TOOL_FAILURE_MARKER}{json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))}"
 
 
@@ -448,6 +524,183 @@ def _retry_delay_seconds(envelope: dict[str, Any]) -> float | None:
     return float(retry_after) if retry_after <= _RETRY_MAX_WAIT_SECONDS else None
 
 
+# ---------------------------------------------------------------------------
+# Readback after a write of unknown outcome (spec A3, rung 1)
+#
+# A write that timed out or met a 5xx may or may not have landed. For the
+# writes listed here one GET of the same resource settles it:
+#   committed     -> the call returns the resource, with a note saying so;
+#   not_committed -> the failure stands, but as "nothing changed";
+#   inconclusive  -> the failure stays unknown_outcome, as before.
+# Only id-addressed writes that set a state are listed (complete, edit,
+# delete). Applying one of them twice ends in the same state, so even a
+# write that lands after the readback cannot be doubled by a re-send.
+#
+# Creates: the sidecar picks the new item's id itself (Django has accepted a
+# caller-supplied itemId / deadlineId since 2026-05), so the create can be
+# read back by that id. When the readback finds nothing (a definite 404) the
+# sidecar re-sends the SAME request once, with the same id: if the first
+# attempt lands late it is overwritten by an identical item, never doubled.
+# A create is never handed back to the model as "safe to retry", because the
+# model's retry would carry a new id.
+# ---------------------------------------------------------------------------
+
+_READBACK_DELAY_SECONDS = float(os.getenv("MCP_READBACK_DELAY_SECONDS", "1.0"))
+_ACTION_ITEM_COMPLETE = re.compile(r"^/api/core/action-items/(?P<item>[^/]+)/complete/$")
+_ACTION_ITEM_DETAIL = re.compile(r"^/api/core/action-items/(?P<item>[^/]+)/$")
+_CASE_DATE_DETAIL = re.compile(r"^/api/core/case-important-dates/(?P<case>[^/]+)/(?P<date>[^/]+)/$")
+_ACTION_ITEM_COMPARED_FIELDS = ("title", "description", "status", "priority")
+_CASE_DATE_COMPARED_FIELDS = ("label", "date", "notes")
+# Create path -> the body field that names the new item's id.
+_CLIENT_ID_CREATES = {
+    "/api/core/action-items/": "itemId",
+    "/api/core/case-important-dates/": "deadlineId",
+}
+
+
+def _with_client_id(path: str, body: Any) -> Any:
+    """Give a create a fresh id of our own, so it can be read back by that id."""
+    field = _CLIENT_ID_CREATES.get(path)
+    if field and isinstance(body, dict) and not body.get(field):
+        return {**body, field: str(uuid4())}
+    return body
+
+Readback = Callable[[], Awaitable[tuple[str, Any]]]
+
+
+def _fields_verdict(resource: Any, body: dict | None, fields: tuple[str, ...]) -> str:
+    """committed when every compared field sent now reads back unchanged; otherwise unknown.
+
+    A difference is not proof the write failed: the server may normalise a
+    value (status aliases, trimmed text), so it stays inconclusive.
+    """
+    sent = {key: (body or {}).get(key) for key in fields if (body or {}).get(key) is not None}
+    if not sent or not isinstance(resource, dict):
+        return "inconclusive"
+    return "committed" if all(resource.get(key) == value for key, value in sent.items()) else "inconclusive"
+
+
+def _readback_for(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    params: dict | None = None,
+) -> Readback | None:
+    """The one GET that settles an unknown-outcome write to ``path``, or None when there is none."""
+    verb = method.upper()
+    query = {k: v for k, v in (params or {}).items() if v is not None}
+
+    async def read(target: str) -> tuple[int, Any]:
+        response = await client.get(target, params=query)
+        return response.status_code, _response_body(response)
+
+    if verb == "POST" and path in _CLIENT_ID_CREATES and isinstance(body, dict):
+        new_id = str(body.get(_CLIENT_ID_CREATES[path]) or "")
+        case_id = str(body.get("caseId") or "")
+        if not new_id or not case_id:
+            return None
+        if path == "/api/core/action-items/":
+            target = f"/api/core/action-items/{quote(new_id, safe='')}/"
+            query = {"caseId": case_id}
+        else:
+            target = f"/api/core/case-important-dates/{quote(case_id, safe='')}/{quote(new_id, safe='')}/"
+            query = {k: v for k, v in {"appId": body.get("appId")}.items() if v is not None}
+
+        async def created() -> tuple[str, Any]:
+            response = await client.get(target, params=query)
+            resource = _response_body(response)
+            if response.status_code == 200 and isinstance(resource, dict):  # noqa: PLR2004
+                return "committed", resource
+            # Only a definite 404 means "not there". A 405 (an older Django
+            # without the GET) or anything else proves nothing.
+            return ("absent" if response.status_code == 404 else "inconclusive"), None  # noqa: PLR2004
+
+        return created
+    if verb == "POST" and (match := _ACTION_ITEM_COMPLETE.match(path)):
+        target = f"/api/core/action-items/{match['item']}/"
+
+        async def completed() -> tuple[str, Any]:
+            status, resource = await read(target)
+            if status != 200 or not isinstance(resource, dict) or "completed" not in resource:  # noqa: PLR2004
+                return "inconclusive", None
+            return ("committed" if resource["completed"] is True else "not_committed"), resource
+
+        return completed
+    if verb == "PATCH" and _ACTION_ITEM_DETAIL.match(path):
+
+        async def edited_item() -> tuple[str, Any]:
+            status, resource = await read(path)
+            if status != 200:  # noqa: PLR2004
+                return "inconclusive", None
+            return _fields_verdict(resource, body, _ACTION_ITEM_COMPARED_FIELDS), resource
+
+        return edited_item
+    if verb == "PATCH" and _CASE_DATE_DETAIL.match(path):
+
+        async def edited_date() -> tuple[str, Any]:
+            status, resource = await read(path)
+            if status != 200:  # noqa: PLR2004
+                return "inconclusive", None
+            return _fields_verdict(resource, body, _CASE_DATE_COMPARED_FIELDS), resource
+
+        return edited_date
+    if verb == "DELETE" and _CASE_DATE_DETAIL.match(path):
+
+        async def deleted() -> tuple[str, Any]:
+            status, _resource = await read(path)
+            if status == 404:  # noqa: PLR2004
+                return "committed", {"status": "deleted"}
+            if status == 200:  # noqa: PLR2004
+                return "not_committed", None
+            return "inconclusive", None
+
+        return deleted
+    return None
+
+
+async def _settle_by_readback(path: str, envelope: dict[str, Any], readback: Readback) -> httpx.Response | None:
+    """Run the readback for an unknown outcome. Returns a response when the write landed.
+
+    Otherwise updates ``envelope`` in place: proven not to have landed becomes a
+    failure with nothing changed; anything else stays unknown_outcome.
+    """
+    error = envelope["error"]
+    # Give a write that is still in flight a moment to land before looking.
+    await _retry_sleep(_READBACK_DELAY_SECONDS)
+    try:
+        verdict, resource = await readback()
+    except Exception:  # noqa: BLE001 - a broken readback leaves the outcome unknown, never worse
+        verdict, resource = "inconclusive", None
+    _failure_logger.info("mcp.tool_readback method=%s verdict=%s", error["method"], verdict)
+    error["readback"] = verdict
+    if verdict == "committed":
+        _record_failure_event(envelope, "recovery_outcome")
+        result = dict(resource) if isinstance(resource, dict) else {}
+        result["readback"] = {
+            "outcome": "committed",
+            "note": (
+                "The request reported an error, but reading it back shows the change was made. "
+                "Tell the user it went through after a delay; do not call this tool again."
+            ),
+        }
+        return httpx.Response(200, json=result)
+    if verdict == "absent":
+        # The caller re-sends the same create once; the envelope is left as is.
+        return None
+    if verdict == "not_committed":
+        status = error["httpStatus"]
+        failure_class = "transient" if status is None or status in _TRANSIENT_STATUSES else "internal"
+        error["class"] = failure_class
+        error["sideEffectState"] = "none"
+        error["retryable"] = failure_class == "transient"
+        envelope["recovery"] = _recovery_for(failure_class, path, "none")
+        envelope["recovery"]["guidance"] += " A readback confirmed the change was NOT made."
+    else:
+        envelope["recovery"]["guidance"] += " An automatic readback could not settle whether it was made."
+    return None
+
+
 async def _send_once(method: str, path: str, send: Any) -> httpx.Response:
     try:
         response = await send()
@@ -464,11 +717,12 @@ async def _send_once(method: str, path: str, send: Any) -> httpx.Response:
     return response
 
 
-async def _checked(method: str, path: str, send: Any) -> httpx.Response:
+async def _checked(method: str, path: str, send: Any, readback: Readback | None = None) -> httpx.Response:
     """Run one Django call (``send`` starts a fresh attempt each time it is called).
 
     A provably side-effect-free transient failure is retried automatically, up
-    to ``MCP_DJANGO_TRANSIENT_RETRIES`` times. Whatever still fails is raised
+    to ``MCP_DJANGO_TRANSIENT_RETRIES`` times. A write of unknown outcome is
+    settled by ``readback`` when one is given. Whatever still fails is raised
     with the failure envelope appended to its message.
     """
     attempts = 0
@@ -483,6 +737,29 @@ async def _checked(method: str, path: str, send: Any) -> httpx.Response:
                 await _retry_sleep(delay)
                 continue
             envelope["error"]["attempts"] = attempts
+            if readback is not None and envelope["error"]["class"] == "unknown_outcome":
+                settled = await _settle_by_readback(path, envelope, readback)
+                if settled is not None:
+                    return settled
+                if envelope["error"].get("readback") == "absent":
+                    # A create that provably has not landed: send the same
+                    # request (same id) once more. See "Readback" above.
+                    attempts += 1
+                    try:
+                        return await _send_once(method, path, send)
+                    except (httpx.TransportError, httpx.HTTPStatusError) as resend_exc:
+                        resent_envelope = resend_exc.tool_failure_envelope
+                        resent_envelope["error"]["attempts"] = attempts
+                        resent_envelope["error"]["readback"] = "absent_then_resent"
+                        if resent_envelope["error"]["sideEffectState"] != "none":
+                            resent_envelope["recovery"]["guidance"] += (
+                                " The first attempt was not found, so it was sent once more with the same id; "
+                                "that also failed. Do not create it again with a new call."
+                            )
+                        if isinstance(resend_exc, httpx.HTTPStatusError):
+                            raise _status_failure(method, path, resend_exc, resent_envelope) from resend_exc
+                        message = _tool_failure_message(str(resend_exc), resent_envelope)
+                        raise type(resend_exc)(message, request=getattr(resend_exc, "_request", None)) from resend_exc
             if isinstance(exc, httpx.HTTPStatusError):
                 raise _status_failure(method, path, exc, envelope) from exc
             message = _tool_failure_message(str(exc), envelope)
@@ -557,7 +834,13 @@ async def _post(ctx: Context, path: str, body: dict) -> dict[str, Any]:
     await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
-        r = await _checked("POST", resolved_path, lambda: c.post(resolved_path, content=json.dumps(body)))
+        body = _with_client_id(resolved_path, body)
+        r = await _checked(
+            "POST",
+            resolved_path,
+            lambda: c.post(resolved_path, content=json.dumps(body)),
+            _readback_for(c, "POST", resolved_path, body),
+        )
         return r.json()
 
 
@@ -579,7 +862,9 @@ async def _patch(ctx: Context, path: str, body: dict) -> dict[str, Any]:
     await _authorize_meeting_tool(ctx)
     async with _client(_token(ctx)) as c:
         path = _resolve_path(path)
-        r = await _checked("PATCH", path, lambda: c.patch(path, content=json.dumps(body)))
+        r = await _checked(
+            "PATCH", path, lambda: c.patch(path, content=json.dumps(body)), _readback_for(c, "PATCH", path, body)
+        )
         return r.json()
 
 
@@ -588,7 +873,12 @@ async def _delete(ctx: Context, path: str, params: dict | None = None) -> dict[s
     async with _client(_token(ctx)) as c:
         resolved_path = _resolve_path(path)
         query = {k: v for k, v in (params or {}).items() if v is not None}
-        r = await _checked("DELETE", resolved_path, lambda: c.delete(resolved_path, params=query))
+        r = await _checked(
+            "DELETE",
+            resolved_path,
+            lambda: c.delete(resolved_path, params=query),
+            _readback_for(c, "DELETE", resolved_path, params=query),
+        )
         return r.json() if r.content else {"status": "deleted"}
 
 
@@ -1558,7 +1848,13 @@ async def record_assistant_message_feedback(
     )
 
 
-@mcp.tool(description="Answer questions about people involved in a case using dossier metadata.")
+@mcp.tool(
+    description=(
+        "Read dossier metadata or a profile for a specific person on a case. Use when the user asks about an "
+        "individual's dossier or person-specific background. Do not use for a case roster, parties, counsel, "
+        "judges, or a list of people and roles; use retrieve_case_individuals for those requests."
+    )
+)
 async def read_people_dossiers(
     ctx: Context,
     case_id: str,
@@ -1588,7 +1884,8 @@ async def read_people_dossiers(
 
 @mcp.tool(
     description=(
-        "List the authenticated user's case contacts, CourtListener parties, counsel, and judges with their recorded roles."
+        "Return the authenticated user's case roster: list case contacts, CourtListener parties, counsel, and judges "
+        "with their recorded roles."
     ),
 )
 async def retrieve_case_individuals(ctx: Context, case_id: str, app_id: str) -> dict:
@@ -2069,9 +2366,28 @@ async def query_processor(ctx: Context, query: str, case_id: str | None = None) 
     return await _post(ctx, "/api/query-processor/", {"query": query, "caseId": case_id})
 
 
-@mcp.tool(description="Generate insight about case deadlines.")
-async def deadlines_insight(ctx: Context, case_id: str, query: str | None = None) -> dict:
-    return await _post(ctx, "/api/deadlines-insight/", {"caseId": case_id, "query": query})
+@mcp.tool(
+    description=(
+        "Generate insight about case deadlines. Pass app_id when the case may exist in more than one practice area. "
+        "Optional query text is included as context for the deadline analysis."
+    )
+)
+async def deadlines_insight(
+    ctx: Context,
+    case_id: str,
+    app_id: str | None = None,
+    query: str | None = None,
+) -> dict:
+    payload = {"caseId": case_id}
+    if app_id:
+        payload["appId"] = app_id
+    if query:
+        payload["notes"] = query
+    return await _post(
+        ctx,
+        "/api/deadlines-insight/",
+        payload,
+    )
 
 
 @mcp.tool(description="Retrieve a previously generated document summary.")
@@ -5658,6 +5974,22 @@ async def manage_automation(
     return await _post(ctx, f"{path}/{action}", {})
 
 
+@mcp.tool(
+    description=(
+        "List the recent runs of one automation, newest first: when each was due, whether it ran, failed or was "
+        "skipped (and why, as a short code), and for team or firm automations how many members it went to. Use "
+        "when the user asks whether an automation ran, why they did not get it, or how it has been doing. Members "
+        "of a shared automation see only their own copy of each run."
+    )
+)
+async def list_automation_runs(ctx: Context, automation_id: str, limit: int = 10) -> dict:
+    return await _get(
+        ctx,
+        f"/api/core/automations/{quote(str(automation_id), safe='')}/runs",
+        {"limit": max(1, min(int(limit or 10), 50))},
+    )
+
+
 # Agent-set check-backs (docs/specs/vienna-openmausbot/42; description adapted
 # from OpenMausBot, Apache-2.0). No confirmation step: the run a check-back
 # schedules is the unattended read-only run, and Django stores it as a
@@ -5688,6 +6020,8 @@ async def check_back(
     time_zone: str | None = None,
 ) -> dict:
     """Set, list or cancel the assistant's own one-time follow-ups."""
+    if str(app_id or "").strip().casefold() == "global":
+        return {"error": "app_scope_denied", "message": "A global grant cannot access product-scoped check-backs."}
     if cancel:
         return await _delete(ctx, f"/api/core/check-backs/{quote(str(cancel), safe='')}")
     if not when and not note:

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { OGDialog, OGDialogContent, OGDialogTitle } from './OriginalDialog';
 import ControlCombobox from './ControlCombobox';
@@ -71,7 +72,7 @@ const getPopoverWidth = () => {
 };
 
 const openPopover = () => {
-  const trigger = screen.getByRole('combobox');
+  const trigger = screen.getByRole('combobox', { name: 'Test combobox' });
   act(() => {
     trigger.click();
   });
@@ -273,6 +274,41 @@ describe('ControlCombobox dropdown caps', () => {
       'true',
     );
     expect(screen.queryByRole('option', { name: 'Agent 10' })).not.toBeInTheDocument();
+  });
+
+  it('resets the filtered list after selecting and reopening the combobox', () => {
+    function Harness() {
+      const [selectedValue, setSelectedValue] = useState('agent-1');
+      const selectedLabel = manyItems.find((item) => item.value === selectedValue)?.label ?? '';
+
+      return (
+        <ControlCombobox
+          selectedValue={selectedValue}
+          displayValue={selectedLabel}
+          items={manyItems}
+          setValue={setSelectedValue}
+          ariaLabel="Test combobox"
+          searchPlaceholder="Search agents"
+          isCollapsed={false}
+          showCarat
+          unsearchedLimit={10}
+        />
+      );
+    }
+
+    render(<Harness />);
+    openPopover();
+    fireEvent.change(screen.getByPlaceholderText('Search agents'), {
+      target: { value: 'Agent 15' },
+    });
+    fireEvent.click(screen.getByRole('option', { name: 'Agent 15' }));
+    openPopover();
+    expect(screen.getByPlaceholderText('Search agents')).toHaveValue('');
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-setsize', '10');
+    expect(screen.getByRole('option', { name: 'Agent 15' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
   });
 
   it('caps the popover at popoverMaxHeight with the list as the scrolling region', () => {

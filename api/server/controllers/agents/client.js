@@ -155,6 +155,7 @@ const {
   decrementPendingRequest,
   maybePrewarmCodeSandbox,
   assertModelBoundContent,
+  getProviderErrorMessage,
   reportLocatorTraversalFailure,
   filterFilesByEndpointRuntimeConfig,
   createModelBoundChatModelCallback: createModelBoundContentCallback,
@@ -211,7 +212,6 @@ const {
   isAgentsEndpoint,
   isEphemeralAgentId,
   removeNullishValues,
-  stripLangChainTroubleshootingUrl,
   DEFAULT_MEMORY_MAX_INPUT_TOKENS,
 } = require('librechat-data-provider');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
@@ -346,18 +346,22 @@ function getUserFacingRequestError(baseMessage, error, appConfig) {
     appConfig?.filters,
     appConfig?.messageFilter?.pii,
   );
-  if (protectionEnabled || !error?.message) {
+  if (protectionEnabled) {
     return baseMessage;
   }
+
   const typedError = resolveLangChainError(error);
   if (typedError != null) {
     return typedError;
   }
-  const message = stripLangChainTroubleshootingUrl(error.message);
-  if (!message) {
-    return baseMessage;
-  }
-  return `${baseMessage}: ${message}`;
+  /** LangGraph can wrap a provider rejection in the generic request error. Keep its specific
+   *  cause through the shared bounded parser, but never inspect it past the content-policy gate. */
+  const message = getProviderErrorMessage(error);
+  return message &&
+    message !== baseMessage &&
+    message !== 'The model provider could not complete this request.'
+    ? `${baseMessage}: ${message}`
+    : baseMessage;
 }
 
 const parseConversationIdentity = (conversationId) => {

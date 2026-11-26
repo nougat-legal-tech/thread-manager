@@ -935,7 +935,7 @@ FUNCTION_REGISTRY = MappingProxyType(_FUNCTIONS)
 # compatible implementation or request contract.
 MCP_FUNCTION_METADATA: dict[str, dict[str, Any]] = {
     name: {
-        "appIds": ["3", "4", "5"],
+        "appIds": ["3", "4"],
         "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
         "requiresCaseId": True,
         "mutatesState": False,
@@ -1094,6 +1094,14 @@ for _function_name in _SERIESAI_READ_ONLY_MCP_FUNCTION_NAMES:
             },
         }
     )
+
+MCP_FUNCTION_METADATA["list_seriesai_document_templates"].update(
+    {
+        "appIds": ["3", "4"],
+        "trustedScopeBindings": {"organization_id": "caseId", "app_id": "appId"},
+        "requiresCaseId": True,
+    }
+)
 
 # Read-only member listing. ChatProxy orchestration offers only tools marked
 # mutatesState=False, so an unset flag hid this from manage_organization
@@ -1713,7 +1721,7 @@ MCP_CALLER_COMPATIBILITY: dict[str, tuple[dict[str, Any], ...]] = {
             "operationId": "list-seriesai-document-templates",
             "surfaces": ["chat_proxy"],
             "verification": "verified_contract_mapping",
-            "appIds": ["3", "4", "5"],
+            "appIds": ["3", "4"],
             "mutatesState": False,
             "trustedScopeBindings": {"organization_id": "caseId"},
             "invocationGuidance": (
@@ -2149,6 +2157,13 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ("intent_handler",),
     ),
     (
+        "check_email_connection_status",
+        "communications",
+        "Check the authenticated user's saved email connection metadata without reading messages or drafts.",
+        (),
+        ("intent_handler",),
+    ),
+    (
         "retrieve_case_email_drafts",
         "communications",
         "List saved email drafts on a named case.",
@@ -2167,48 +2182,6 @@ _ADDITIONAL_INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "case_management",
         "List the people on a case with their names and roles.",
         (),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_marketing_automations",
-        "company_operations",
-        "List a Vienna company's running marketing automations.",
-        ("3", "4"),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_marketing_performance",
-        "company_operations",
-        "Show a Vienna company's campaign and marketing performance.",
-        ("3", "4"),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_revenue",
-        "company_operations",
-        "Show a Vienna company's revenue metrics or revenue trend.",
-        ("3", "4"),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_sales",
-        "company_operations",
-        "Show a Vienna company's sales metrics.",
-        ("3", "4"),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_upcoming_campaigns",
-        "company_operations",
-        "List scheduled or draft upcoming campaigns for a Vienna company.",
-        ("3", "4"),
-        ("intent_handler", "chat_proxy"),
-    ),
-    (
-        "retrieve_company_web_analytics",
-        "company_operations",
-        "Show a Vienna company's website analytics.",
-        ("3", "4"),
         ("intent_handler", "chat_proxy"),
     ),
     (
@@ -2501,12 +2474,6 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         ),
     },
     {
-        "functionId": "edit_company_deadlines",
-        "name": "edit_company_deadlines",
-        "categoryId": "scheduling",
-        "description": "Add, update, or delete a legacy company deadline in the embedded company record.",
-    },
-    {
         "functionId": "advance_lifecycle_stage",
         "name": "advance_lifecycle_stage",
         "operationIds": ["advance-lifecycle-stage"],
@@ -2519,18 +2486,6 @@ _INTENT_HANDLER_ONLY_FUNCTION_RECORDS = (
         "name": "classify_lifecycle_upload",
         "categoryId": "documents_research",
         "description": "Classify an uploaded company document and record its lifecycle evidence.",
-    },
-    {
-        "functionId": "diligence_room_prepare",
-        "name": "diligence_room_prepare",
-        "categoryId": "company_operations",
-        "description": "Prepare a company or deal diligence room and identify required documents or missing evidence.",
-    },
-    {
-        "functionId": "request_missing_lifecycle_documents",
-        "name": "request_missing_lifecycle_documents",
-        "categoryId": "documents_research",
-        "description": "Identify missing lifecycle documents and create follow-up requests for them.",
     },
     {
         "functionId": "diligence_room_query",
@@ -2777,7 +2732,7 @@ def universal_function_records(  # noqa: C901, PLR0912, PLR0915 - explicit merge
                 # These are the existing company-workspace read tools. Keep
                 # their app restriction in the universal map so discovery can
                 # filter them before attaching schemas to a caller.
-                record["appIds"] = ["3", "4", "5"]
+                record.setdefault("appIds", ["3", "4", "5"])
             if isinstance(schema, dict):
                 schemas_by_surface = record.setdefault("inputSchemasBySurface", {})
                 if isinstance(schemas_by_surface, dict):

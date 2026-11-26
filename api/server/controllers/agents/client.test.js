@@ -10170,6 +10170,22 @@ describe('AgentClient - resumeCompletion content protection', () => {
       [ContentTypes.ERROR]: `An error occurred while resuming the request: ${providerMessage}`,
     });
   });
+
+  it('preserves a provider error wrapped by a generic request failure when protection is disabled', async () => {
+    const providerMessage = 'E2E forced stream error wrapped by the agent graph';
+    const wrappedError = new Error('An error occurred while resuming the request', {
+      cause: new Error(providerMessage),
+    });
+    mockCreateRun.mockRejectedValue(wrappedError);
+    const context = makeContext(undefined);
+
+    await AgentClient.prototype.resumeCompletion.call(context, { resumeValue: {} });
+
+    expect(context.contentParts).toContainEqual({
+      type: ContentTypes.ERROR,
+      [ContentTypes.ERROR]: `An error occurred while resuming the request: ${providerMessage}`,
+    });
+  });
 });
 
 describe('fading tier context meta', () => {

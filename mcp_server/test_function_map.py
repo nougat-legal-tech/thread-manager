@@ -31,6 +31,18 @@ def _meeting_grant(session_id="meeting/session-1"):
     return f"header.{payload}.signature"
 
 
+def test_people_dossier_tool_description_routes_roster_questions_to_roster_lookup():
+    dossier_description = server.mcp._tool_manager.get_tool("read_people_dossiers").description
+    roster_description = server.mcp._tool_manager.get_tool("retrieve_case_individuals").description
+
+    assert "specific person" in dossier_description
+    assert "case roster" in dossier_description
+    assert "retrieve_case_individuals" in dossier_description
+    assert "case roster" in roster_description
+    assert "courtlistener parties" in roster_description.casefold()
+    assert "recorded roles" in roster_description.casefold()
+
+
 def test_meeting_retention_authorization_precedes_mcp_api_request(monkeypatch):
     grant = _meeting_grant()
     ctx = SimpleNamespace(
@@ -71,7 +83,7 @@ def test_meeting_retention_authorization_precedes_mcp_api_request(monkeypatch):
     monkeypatch.setattr(server, "_token", lambda _ctx: "Bearer user-token")
     monkeypatch.setattr(server, "_checked", checked)
 
-    result = asyncio.run(server._get(ctx, "/api/core/company-operations/", {"app_id": "4"}))
+    result = _run_immediate(server._get(ctx, "/api/core/company-operations/", {"app_id": "4"}))
 
     assert result == {"status": "ok"}
     assert calls == [
@@ -126,7 +138,7 @@ def test_meeting_retention_denial_stops_mcp_api_request(monkeypatch):
     monkeypatch.setattr(server, "_checked", checked)
 
     with pytest.raises(PermissionError, match="authorization denied"):
-        asyncio.run(server._get(ctx, "/api/core/company-operations/"))
+        _run_immediate(server._get(ctx, "/api/core/company-operations/"))
 
     assert len(calls) == 2
     assert calls[0][1] == "POST"
@@ -520,7 +532,7 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     assert company_details["callerAliases"][0]["name"] == "retrieve_company_details"
     assert company_details["callerAliases"][0]["verification"] == "verified_shared_operation_id"
     revenue_metrics = company_by_name["get_seriesai_revenue_metrics"]
-    assert revenue_metrics["appIds"] == ["3", "4", "5"]
+    assert revenue_metrics["appIds"] == ["3", "4"]
     case_management = _run_immediate(server.browse_function_map(object(), "case_management"))
     important_dates = next(
         record for record in case_management["functions"] if record["name"] == "list_case_important_dates"
@@ -558,6 +570,12 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
     )
     assert acknowledgment_alias["verification"] == "verified_contract_mapping"
     assert all(record["name"] != "deadline_acknowledgment" for record in scheduling["functions"])
+    company_deadline_alias = next(
+        alias for alias in date_editor["callerAliases"] if alias["name"] == "edit_company_deadlines"
+    )
+    assert company_deadline_alias["verification"] == "verified_contract_mapping"
+    assert company_deadline_alias["appIds"] == ["3", "4"]
+    assert all(record["name"] != "edit_company_deadlines" for record in scheduling["functions"])
 
     integrations = _run_immediate(server.browse_function_map(object(), "integrations_admin"))
     sharepoint_drives = next(
@@ -578,7 +596,6 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
         "company_operations": {
             "add_cap_table_entry",
             "update_cap_table_entry",
-            "diligence_room_prepare",
             "diligence_room_query",
             "generate_founder_update",
             "generate_board_consent",
@@ -587,23 +604,15 @@ def test_workflow_mcp_tools_are_indexed_as_approval_gated_capabilities():
             "cap_table_issuance_intent",
             "ownership_query",
             "round_status_query",
-            "retrieve_company_marketing_automations",
-            "retrieve_company_marketing_performance",
-            "retrieve_company_revenue",
-            "retrieve_company_sales",
-            "retrieve_company_upcoming_campaigns",
-            "retrieve_company_web_analytics",
             "seriesai_campaign_read_refusal",
             "summarize_financing_document",
         },
         "documents_research": {
-            "request_missing_lifecycle_documents",
             "document_amendment_request",
             "document_generation_request",
             "lawsuit_generation",
             "strategic_digest",
         },
-        "scheduling": {"edit_company_deadlines"},
         "communications": {
             "archive_case_email_draft",
             "delete_case_email_message",

@@ -136,6 +136,14 @@ describe('LangChain provider error text', () => {
       expect(getProviderErrorMessage(error)).toBe('400 masking unavailable');
     });
 
+    it('recovers provider wording wrapped by the generic resumed-run error', () => {
+      const providerError = new Error('E2E forced stream error');
+      const wrapper = new Error('An error occurred while resuming the request', {
+        cause: providerError,
+      });
+      expect(getProviderErrorMessage(wrapper)).toBe(providerError.message);
+    });
+
     it('strips a troubleshooting suffix crossing the output boundary', () => {
       const explanation = 'x'.repeat(1990);
       const error = new Error(`${explanation}${troubleshooting('INVALID_PROMPT_INPUT')}`);

@@ -168,6 +168,16 @@ def test_check_back_sets_one_personal_read_only_follow_up_without_confirmation(c
     ]
 
 
+def test_check_back_denies_global_scope_before_backend_request(calls):
+    result = _run(server.check_back(object(), when="in 2 hours", note="Review the docket.", app_id="global"))
+
+    assert result == {
+        "error": "app_scope_denied",
+        "message": "A global grant cannot access product-scoped check-backs.",
+    }
+    assert calls == []
+
+
 def test_check_back_lists_and_cancels_only_the_requested_item(calls):
     _run(server.check_back(object()))
     _run(server.check_back(object(), cancel="cb/one"))

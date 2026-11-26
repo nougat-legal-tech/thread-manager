@@ -55,7 +55,7 @@ describe('useLazyHighlight throttling', () => {
     expect(result.current).toEqual(['a']);
   });
 
-  it('throttles re-highlights while streaming and highlights the settled value once', async () => {
+  it('throttles re-highlights while streaming and highlights the latest chunk on cadence', async () => {
     const { result, rerender } = renderHook(({ code }) => useLazyHighlight(code, 'js'), {
       initialProps: { code: 'a' },
     });
@@ -70,7 +70,10 @@ describe('useLazyHighlight throttling', () => {
     expect(mockHighlight).not.toHaveBeenCalled();
     expect(result.current).toEqual(['abcde']);
 
-    act(() => jest.advanceTimersByTime(HIGHLIGHT_THROTTLE_MS));
+    /** A stream that keeps changing must still be highlighted at the throttle
+     *  cadence. Restarting this timer on each chunk would turn it into a
+     *  debounce and leave the block unhighlighted until the stream ends. */
+    act(() => jest.advanceTimersByTime(HIGHLIGHT_THROTTLE_MS - chunks.length * 20));
     await flush();
     expect(mockHighlight).toHaveBeenCalledTimes(1);
     expect(mockHighlight).toHaveBeenLastCalledWith('js', 'abcde');

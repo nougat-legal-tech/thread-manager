@@ -347,6 +347,7 @@ def test_every_failure_class_has_recovery_guidance():
         "reauth_required",
         "permission_denied",
         "internal",
+        "upstream_provider",
     }
     assert set(server._RECOVERY_BY_CLASS) == classes  # noqa: SLF001
 
@@ -504,3 +505,476 @@ def test_other_reads_and_all_writes_get_no_browser(monkeypatch):
 
     assert "browserPlaybook" not in _envelope(other_read.value)["recovery"]
     assert "browserPlaybook" not in _envelope(write.value)["recovery"]
+
+
+# --- Readback after a write of unknown outcome (spec A3, rung 1) ---------------
+
+
+def _client_by_method(monkeypatch, write, read):
+    """The write gets ``write``; every GET (the readback) gets ``read``. Returns what was sent."""
+    calls: list[tuple[str, str]] = []
+    waits: list[float] = []
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def _answer(self, verb, outcome):
+            async def send(path, *_args, **_kwargs):
+                calls.append((verb, path))
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+            return send
+
+        def __getattr__(self, verb):
+            return self._answer(verb, read if verb == "get" else write)
+
+    async def _no_wait(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(server, "_client", lambda _token: _MockClient())
+    monkeypatch.setattr(server, "_token", lambda _ctx: "token")
+    monkeypatch.setattr(server, "_retry_sleep", _no_wait)
+    return calls, waits
+
+
+_ITEM = "/api/core/action-items/item-1/"
+_DATE = "/api/core/case-important-dates/case-1/date-1/"
+_TIMEOUT = httpx.ReadTimeout("timed out")
+
+
+def _ok(body):
+    return _response("GET", 200, json=body)
+
+
+def test_a_completion_that_landed_returns_the_item_with_a_note_and_is_not_resent(monkeypatch):
+    calls, waits = _client_by_method(monkeypatch, _TIMEOUT, _ok({"id": "item-1", "completed": True}))
+
+    result = _run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    assert result["completed"] is True
+    assert result["readback"]["outcome"] == "committed"
+    assert "do not call this tool again" in result["readback"]["note"]
+    assert calls == [("post", "/api/core/action-items/item-1/complete/"), ("get", _ITEM)]
+    assert waits == [server._READBACK_DELAY_SECONDS]  # noqa: SLF001
+
+
+def test_a_completion_that_did_not_land_is_reported_as_nothing_changed(monkeypatch):
+    _client_by_method(monkeypatch, _TIMEOUT, _ok({"id": "item-1", "completed": False}))
+
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert envelope["error"]["class"] == "transient"
+    assert envelope["error"]["sideEffectState"] == "none"
+    assert envelope["error"]["readback"] == "not_committed"
+    assert envelope["recovery"]["allowed"] == "retry_once"
+    assert "NOT made" in envelope["recovery"]["guidance"]
+
+
+def test_a_500_whose_readback_shows_nothing_changed_is_an_internal_failure_not_a_retry(monkeypatch):
+    _client_by_method(monkeypatch, _response("POST", 500, json={"detail": "boom"}), _ok({"completed": False}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    error = _envelope(raised.value)["error"]
+    assert (error["class"], error["sideEffectState"], error["retryable"]) == ("internal", "none", False)
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        _response("GET", 500, json={"detail": "also down"}),
+        _response("GET", 404, json={"detail": "gone"}),
+        _ok({"id": "item-1"}),
+        httpx.ReadTimeout("readback timed out"),
+    ],
+)
+def test_a_readback_that_cannot_tell_leaves_the_outcome_unknown(monkeypatch, read):
+    calls, _waits = _client_by_method(monkeypatch, _TIMEOUT, read)
+
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert envelope["error"]["class"] == "unknown_outcome"
+    assert envelope["error"]["sideEffectState"] == "unknown"
+    assert envelope["error"]["readback"] == "inconclusive"
+    assert envelope["recovery"]["allowed"] == "verify"
+    assert [verb for verb, _path in calls] == ["post", "get"]
+
+
+def test_an_edit_is_committed_only_when_every_sent_field_reads_back(monkeypatch):
+    _client_by_method(monkeypatch, _TIMEOUT, _ok({"title": "New", "priority": "high", "status": "open"}))
+    result = _run(server._patch(object(), "/api/action-items/item-1/", {"title": "New", "priority": "high"}))  # noqa: SLF001
+    assert result["readback"]["outcome"] == "committed"
+
+    _client_by_method(monkeypatch, _TIMEOUT, _ok({"title": "Old", "priority": "high"}))
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._patch(object(), "/api/action-items/item-1/", {"title": "New", "priority": "high"}))  # noqa: SLF001
+    # A different value may be the server normalising it: not proof either way.
+    assert _envelope(raised.value)["error"]["readback"] == "inconclusive"
+
+
+def test_an_edit_with_no_comparable_field_stays_unknown(monkeypatch):
+    _client_by_method(monkeypatch, _TIMEOUT, _ok({"suggestedDueDate": "2026-12-01"}))
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._patch(object(), "/api/action-items/item-1/", {"suggestedDueDate": "2026-12-01"}))  # noqa: SLF001
+    assert _envelope(raised.value)["error"]["class"] == "unknown_outcome"
+
+
+def test_a_case_date_edit_reads_the_same_date_back(monkeypatch):
+    calls, _waits = _client_by_method(monkeypatch, _TIMEOUT, _ok({"label": "Hearing", "date": "2026-12-01"}))
+
+    result = _run(  # noqa: SLF001
+        server._patch(object(), "/api/case-important-dates/case-1/date-1/", {"label": "Hearing", "date": "2026-12-01"})
+    )
+
+    assert result["readback"]["outcome"] == "committed"
+    assert calls[-1] == ("get", _DATE)
+
+
+def test_a_case_date_delete_is_settled_by_whether_the_date_still_exists(monkeypatch):
+    _client_by_method(monkeypatch, _TIMEOUT, _response("GET", 404, json={"detail": "gone"}))
+    result = _run(server._delete(object(), "/api/case-important-dates/case-1/date-1/", {"appId": "4"}))  # noqa: SLF001
+    assert result["readback"]["outcome"] == "committed"
+
+    _client_by_method(monkeypatch, _TIMEOUT, _ok({"label": "Hearing"}))
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._delete(object(), "/api/case-important-dates/case-1/date-1/", {"appId": "4"}))  # noqa: SLF001
+    assert _envelope(raised.value)["error"]["readback"] == "not_committed"
+
+
+@pytest.mark.parametrize(
+    ("helper", "path"),
+    [
+        ("_post", "/api/action-items/"),  # a create without a caseId cannot be read back
+        ("_post", "/api/action-items/item-1/assign/"),
+        ("_post", "/api/core/thing/"),
+    ],
+)
+def test_writes_without_a_readback_keep_todays_unknown_outcome_and_send_no_get(monkeypatch, helper, path):
+    calls, waits = _client_by_method(monkeypatch, _TIMEOUT, _ok({"completed": True}))
+
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(getattr(server, helper)(object(), path, {}))
+
+    assert "readback" not in _envelope(raised.value)["error"]
+    assert [verb for verb, _path in calls] == ["post"]
+    assert waits == []
+
+
+def test_refused_writes_are_never_read_back(monkeypatch):
+    calls, _waits = _client_by_method(monkeypatch, _response("POST", 409, json={"detail": "conflict"}), _ok({}))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    assert [verb for verb, _path in calls] == ["post"]
+
+
+# --- Creates: read back by an id the sidecar chose ------------------------------
+
+
+def _scripted_client(monkeypatch, posts, read):
+    """POSTs answer from ``posts`` in order; GETs answer ``read``. Returns (calls, bodies)."""
+    calls: list[tuple[str, str, dict | None]] = []
+    bodies: list[dict] = []
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, content=None, **_kwargs):
+            bodies.append(json.loads(content))
+            calls.append(("post", path, None))
+            outcome = posts[min(len(bodies) - 1, len(posts) - 1)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        async def get(self, path, params=None, **_kwargs):
+            calls.append(("get", path, params))
+            if isinstance(read, Exception):
+                raise read
+            return read
+
+    async def _no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(server, "_client", lambda _token: _MockClient())
+    monkeypatch.setattr(server, "_token", lambda _ctx: "token")
+    monkeypatch.setattr(server, "_retry_sleep", _no_wait)
+    return calls, bodies
+
+
+_CREATE = {"caseId": "case-1", "title": "File the reply", "appId": "4"}
+
+
+def test_every_create_carries_an_id_the_sidecar_chose_and_keeps_a_callers_own(monkeypatch):
+    _calls, bodies = _scripted_client(monkeypatch, [_response("POST", 201, json={"ok": True})], _ok({}))
+
+    _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+    _run(server._post(object(), "/api/action-items/", {**_CREATE, "itemId": "mine"}))  # noqa: SLF001
+    _run(server._post(object(), "/api/case-important-dates/", {"caseId": "case-1", "label": "Hearing"}))  # noqa: SLF001
+    _run(server._post(object(), "/api/core/thing/", {"caseId": "case-1"}))  # noqa: SLF001
+
+    assert len(bodies[0]["itemId"]) == 36  # noqa: PLR2004 - a uuid4
+    assert bodies[1]["itemId"] == "mine"
+    assert len(bodies[2]["deadlineId"]) == 36  # noqa: PLR2004
+    assert "itemId" not in bodies[3]
+    assert "deadlineId" not in bodies[3]
+
+
+def test_a_create_that_landed_is_found_by_its_id_and_not_sent_again(monkeypatch):
+    calls, bodies = _scripted_client(monkeypatch, [_TIMEOUT], _ok({"itemId": "x", "title": "File the reply"}))
+
+    result = _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+
+    item_id = bodies[0]["itemId"]
+    assert result["readback"]["outcome"] == "committed"
+    assert calls == [
+        ("post", "/api/core/action-items/", None),
+        ("get", f"/api/core/action-items/{item_id}/", {"caseId": "case-1"}),
+    ]
+
+
+def test_a_create_that_is_not_there_is_sent_once_more_with_the_same_id(monkeypatch):
+    calls, bodies = _scripted_client(
+        monkeypatch,
+        [_TIMEOUT, _response("POST", 201, json={"itemId": "x", "title": "File the reply"})],
+        _response("GET", 404, json={"detail": "not found"}),
+    )
+
+    result = _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+
+    assert result == {"itemId": "x", "title": "File the reply"}
+    assert [verb for verb, _path, _params in calls] == ["post", "get", "post"]
+    assert bodies[0] == bodies[1]  # the same id: a late first attempt is overwritten, not doubled
+
+
+def test_a_create_whose_resend_also_fails_stays_unknown_and_must_not_be_created_again(monkeypatch):
+    calls, bodies = _scripted_client(
+        monkeypatch, [_TIMEOUT, _TIMEOUT], _response("GET", 404, json={"detail": "not found"})
+    )
+
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert envelope["error"]["class"] == "unknown_outcome"
+    assert envelope["error"]["readback"] == "absent_then_resent"
+    assert envelope["error"]["attempts"] == 2  # noqa: PLR2004
+    assert "Do not create it again" in envelope["recovery"]["guidance"]
+    assert envelope["recovery"]["allowed"] == "verify"
+    assert [verb for verb, _path, _params in calls] == ["post", "get", "post"]
+    assert bodies[0]["itemId"] == bodies[1]["itemId"]
+
+
+def test_a_resend_refused_by_django_is_reported_as_that_refusal(monkeypatch):
+    _scripted_client(
+        monkeypatch,
+        [_TIMEOUT, _response("POST", 400, json={"detail": "bad"})],
+        _response("GET", 404, json={"detail": "not found"}),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+
+    error = _envelope(raised.value)["error"]
+    assert (error["class"], error["sideEffectState"], error["readback"]) == (
+        "invalid_input",
+        "none",
+        "absent_then_resent",
+    )
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        _response("GET", 405, json={"detail": "Method not allowed"}),  # a Django without the GET yet
+        _response("GET", 500, json={"detail": "down"}),
+        httpx.ReadTimeout("readback timed out"),
+    ],
+)
+def test_a_create_readback_that_proves_nothing_never_resends(monkeypatch, read):
+    calls, _bodies = _scripted_client(monkeypatch, [_TIMEOUT], read)
+
+    with pytest.raises(httpx.ReadTimeout) as raised:
+        _run(server._post(object(), "/api/action-items/", dict(_CREATE)))  # noqa: SLF001
+
+    envelope = _envelope(raised.value)
+    assert envelope["error"]["class"] == "unknown_outcome"
+    assert envelope["error"]["readback"] == "inconclusive"
+    assert [verb for verb, _path, _params in calls] == ["post", "get"]
+
+
+def test_a_case_date_create_is_read_back_at_its_own_path_and_app(monkeypatch):
+    calls, bodies = _scripted_client(monkeypatch, [_TIMEOUT], _ok({"label": "Hearing"}))
+
+    result = _run(  # noqa: SLF001
+        server._post(object(), "/api/case-important-dates/", {"caseId": "case-1", "label": "Hearing", "appId": "4"})
+    )
+
+    deadline_id = bodies[0]["deadlineId"]
+    assert result["readback"]["outcome"] == "committed"
+    assert calls[-1] == ("get", f"/api/core/case-important-dates/case-1/{deadline_id}/", {"appId": "4"})
+
+
+# --- Durable failure events (spec A5) ---------------------------------------------
+
+
+def _event_client(monkeypatch, tool_outcome, *, event_outcome=None):
+    """Tool calls get ``tool_outcome``; POSTs to the events path are recorded."""
+    import asyncio  # noqa: PLC0415 - only these tests need a real event loop
+
+    recorded: list[dict] = []
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, content=None, **_kwargs):
+            if path == server._FAILURE_EVENTS_PATH:  # noqa: SLF001
+                recorded.append(json.loads(content))
+                if isinstance(event_outcome, Exception):
+                    raise event_outcome
+                return _response("POST", 202, json={"eventId": "e1"})
+            if isinstance(tool_outcome, Exception):
+                raise tool_outcome
+            return tool_outcome
+
+        get = patch = delete = post
+
+    async def _no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(server, "_client", lambda _token: _MockClient())
+    monkeypatch.setattr(server, "_token", lambda _ctx: "token")
+    monkeypatch.setattr(server, "_retry_sleep", _no_wait)
+
+    async def call(coroutine):
+        try:
+            return await coroutine
+        finally:
+            await asyncio.gather(*list(server._PENDING_FAILURE_EVENTS))  # noqa: SLF001
+
+    return recorded, lambda coroutine: asyncio.run(call(coroutine))
+
+
+def test_failure_events_are_off_unless_switched_on(monkeypatch):
+    monkeypatch.setattr(server, "_FAILURE_EVENTS_ENABLED", False)
+    recorded, run = _event_client(monkeypatch, _response("GET", 500, json={"detail": "boom"}))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        run(server._get(object(), "/api/core/thing/"))  # noqa: SLF001
+
+    assert recorded == []
+
+
+def test_a_failure_is_recorded_with_classes_and_path_but_never_detail(monkeypatch):
+    monkeypatch.setattr(server, "_FAILURE_EVENTS_ENABLED", True)
+    recorded, run = _event_client(
+        monkeypatch, _response("POST", 409, json={"detail": "Smith v Jones memo", "code": "stale_item"})
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        run(server._post(object(), "/api/core/thing/", {}))  # noqa: SLF001
+
+    (event,) = recorded
+    assert event == {
+        "eventType": "tool_failure",
+        "surface": "mcp_sidecar",
+        "failureClass": "conflict",
+        "sideEffectState": "none",
+        "httpStatus": 409,
+        "method": "POST",
+        "attempts": 1,
+        "retryable": False,
+        "code": "stale_item",
+        "recoveryAllowed": "repair",
+        "path": "/api/core/thing/",
+    }
+
+
+def test_a_readback_that_found_the_write_is_recorded_as_a_recovery_outcome(monkeypatch):
+    monkeypatch.setattr(server, "_FAILURE_EVENTS_ENABLED", True)
+    recorded, run = _event_client(monkeypatch, httpx.ReadTimeout("timed out"))
+
+    async def _found_readback():
+        return "committed", {"completed": True}
+
+    monkeypatch.setattr(server, "_readback_for", lambda *_args, **_kwargs: _found_readback)
+
+    result = run(server._post(object(), "/api/action-items/item-1/complete/", {}))  # noqa: SLF001
+
+    assert result["readback"]["outcome"] == "committed"
+    assert [event["eventType"] for event in recorded] == ["recovery_outcome"]
+    assert recorded[0]["readback"] == "committed"
+
+
+def test_a_broken_events_endpoint_never_changes_the_tools_own_failure(monkeypatch):
+    monkeypatch.setattr(server, "_FAILURE_EVENTS_ENABLED", True)
+    recorded, run = _event_client(
+        monkeypatch,
+        _response("POST", 400, json={"detail": "bad"}),
+        event_outcome=httpx.ConnectError("events down"),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        run(server._post(object(), "/api/core/thing/", {}))  # noqa: SLF001
+
+    assert _envelope(raised.value)["error"]["class"] == "invalid_input"
+    assert len(recorded) == 1
+
+
+# --- Connector verdicts survive (spec A5) -----------------------------------------
+
+
+def test_a_connector_that_says_not_retryable_is_not_retried(monkeypatch):
+    sends, _waits = _client_returning(
+        monkeypatch,
+        _response("GET", 502, json={"error": "clio_error", "code": "clio_error", "message": "x", "retryable": False}),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), "/api/core/integrations/clio/matters"))  # noqa: SLF001
+
+    error = _envelope(raised.value)["error"]
+    assert (error["class"], error["code"], error["retryable"]) == ("upstream_provider", "clio_error", False)
+    assert len(sends) == 1
+
+
+def test_a_connector_that_says_retryable_keeps_the_normal_retry(monkeypatch):
+    sends, _waits = _client_returning(
+        monkeypatch,
+        _response("GET", 503, json={"error": "clio_unavailable", "code": "clio_unavailable", "retryable": True}),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._get(object(), "/api/core/integrations/clio/matters"))  # noqa: SLF001
+
+    assert _envelope(raised.value)["error"]["class"] == "transient"
+    assert len(sends) == _SENDS_WITH_ONE_RETRY
+
+
+def test_a_write_the_connector_marks_not_retryable_is_still_an_unknown_outcome_on_5xx(monkeypatch):
+    _client_returning(monkeypatch, _response("POST", 502, json={"code": "clio_error", "retryable": False}))
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _run(server._post(object(), "/api/core/integrations/clio/matters", {}))  # noqa: SLF001
+
+    assert _envelope(raised.value)["error"]["class"] == "unknown_outcome"

@@ -1,4 +1,12 @@
-import { useMemo, useState, useRef, memo, useEffect, MemoExoticComponent } from 'react';
+import {
+  useMemo,
+  useState,
+  useRef,
+  memo,
+  useEffect,
+  useCallback,
+  MemoExoticComponent,
+} from 'react';
 import * as Ariakit from '@ariakit/react';
 import { matchSorter } from 'match-sorter';
 import { Search, ChevronDown } from 'lucide-react';
@@ -100,6 +108,14 @@ function ControlCombobox({
     icon: option.icon,
   });
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) setSearchValue('');
+      onOpenChange?.(open);
+    },
+    [onOpenChange],
+  );
+
   const combobox = Ariakit.useComboboxStore({
     defaultItems: items.map(getItem),
     resetValueOnHide: true,
@@ -112,7 +128,7 @@ function ControlCombobox({
     defaultItems: items.map(getItem),
     value: selectedValue,
     setValue,
-    setOpen: onOpenChange,
+    setOpen: handleOpenChange,
     placement,
   });
 

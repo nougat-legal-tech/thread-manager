@@ -1155,7 +1155,6 @@ test.describe('message tree stream operations', () => {
       await providerDetails.click();
     }
     await expect(messagesView(page).getByText(providerError)).toBeVisible();
-
     await sendAndExpectReply(page, afterErrorPrompt, afterErrorReply);
     const messages = await waitForMessages(
       page,

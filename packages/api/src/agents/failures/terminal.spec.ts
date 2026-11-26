@@ -73,6 +73,24 @@ describe('terminal agent-run error logging', () => {
     );
   });
 
+  it('keeps provider wording when the tracked model failure is wrapped generically', () => {
+    const observer = createTerminalRunErrorObserver({
+      logger: { error: jest.fn() },
+      source: '[Agent API]',
+      protectionEnabled: false,
+    });
+    const providerError = new Error('E2E forced stream error');
+    const wrappedError = new Error('An error occurred while resuming the request', {
+      cause: providerError,
+    });
+    observer.modelCallback.handleLLMError(wrappedError);
+
+    expect(observer.getUserFacingError(wrappedError, () => 'fallback')).toBe(
+      'The model provider could not complete this request.\n' +
+        JSON.stringify({ type: 'upstream_model_error', message: providerError.message }),
+    );
+  });
+
   /** A provider error rethrown without its own text: the terminal error carries the wording. */
   it('falls back to the terminal error wording when the tracked failure has none', () => {
     const observer = createTerminalRunErrorObserver({

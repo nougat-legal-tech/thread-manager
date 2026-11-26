@@ -130,17 +130,42 @@ export function getProviderErrorMessage(
   error: unknown,
   maxChars: number = DEFAULT_MAX_PROVIDER_ERROR_CHARS,
 ): string | undefined {
-  const raw =
-    error != null && typeof error === 'object' ? readErrorProperty(error, 'message') : error;
-  if (typeof raw !== 'string') {
-    return undefined;
-  }
   const limit =
     Number.isSafeInteger(maxChars) && maxChars >= 0 ? maxChars : DEFAULT_MAX_PROVIDER_ERROR_CHARS;
-  const message = stripLangChainTroubleshootingUrl(raw.slice(0, limit + TROUBLESHOOTING_LOOKAHEAD))
-    .slice(0, limit)
-    .trim();
-  return message.length === 0 ? undefined : message;
+  const genericWrappers = new Set([
+    GENERIC_PROVIDER_ERROR,
+    'An error occurred while resuming the request',
+    'The model provider could not complete this request.',
+  ]);
+  const seen = new Set<object>();
+  let current = error;
+  let fallbackMessage: string | undefined;
+
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current != null; depth++) {
+    if (typeof current === 'object') {
+      if (seen.has(current)) {
+        break;
+      }
+      seen.add(current);
+    }
+    const raw = typeof current === 'object' ? readErrorProperty(current, 'message') : current;
+    if (typeof raw === 'string') {
+      const message = stripLangChainTroubleshootingUrl(
+        raw.slice(0, limit + TROUBLESHOOTING_LOOKAHEAD),
+      )
+        .slice(0, limit)
+        .trim();
+      if (message) {
+        fallbackMessage ??= message;
+        if (!genericWrappers.has(message)) {
+          return message;
+        }
+      }
+    }
+    current = typeof current === 'object' ? readErrorProperty(current, 'cause') : undefined;
+  }
+
+  return fallbackMessage;
 }
 
 /**
